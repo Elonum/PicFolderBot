@@ -1,0 +1,85 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bot
+telegram-bot
+tg-bot
+main
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+debug.log
+
+# OS files
+Thumbs.db
+.DS_Store
+._*
+
+# Temp files
+tmp/
+temp/
+*.tmp
+
+# Yandex Disk / OAuth (если сохраняете токены локально)
+*.token
+*_token.json
+
+# Uploaded files (если бот сохраняет локально)
+uploads/
+downloads/
+images/
+*.jpg
+*.png
+*.jpeg
+
+# Build output
+dist/
+bin/
+build/
+
+# Testing
+coverage.out
+coverage.html
+*.cov
+*.cover
+
+# Binary for specific OS
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Old backups
+*.bak
+*.backup
+
+# Config with sensitive data
+config.local.yaml
+config.prod.yaml
+*.secret.yaml
