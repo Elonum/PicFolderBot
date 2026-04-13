@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -14,6 +15,7 @@ import (
 )
 
 const baseURL = "https://cloud-api.yandex.net/v1/disk/resources"
+const yandexRetries = 3
 
 type Client struct {
 	token string
@@ -61,7 +63,9 @@ func (c *Client) ListSubdirs(diskPath string) ([]string, error) {
 	}
 	c.setAuth(req)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(func() (*http.Response, error) {
+		return c.http.Do(req)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("yandex list error: %w", err)
 	}
@@ -115,7 +119,9 @@ func (c *Client) UploadFile(diskPath string, data []byte, mimeType string) error
 		req.Header.Set("Content-Type", mimeType)
 	}
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(func() (*http.Response, error) {
+		return c.http.Do(req)
+	})
 	if err != nil {
 		return fmt.Errorf("upload content error: %w", err)
 	}
@@ -137,7 +143,9 @@ func (c *Client) mkdir(diskPath string) error {
 	}
 	c.setAuth(req)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(func() (*http.Response, error) {
+		return c.http.Do(req)
+	})
 	if err != nil {
 		return fmt.Errorf("mkdir error: %w", err)
 	}
@@ -160,7 +168,9 @@ func (c *Client) getUploadURL(diskPath string) (string, error) {
 	}
 	c.setAuth(req)
 
-	resp, err := c.http.Do(req)
+	resp, err := c.doWithRetry(func() (*http.Response, error) {
+		return c.http.Do(req)
+	})
 	if err != nil {
 		return "", fmt.Errorf("get upload url error: %w", err)
 	}
@@ -203,4 +213,41 @@ func decodeAPIError(resp *http.Response) error {
 	default:
 		return fmt.Errorf("yandex api error (%d)", resp.StatusCode)
 	}
+}
+
+func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < yandexRetries; attempt++ {
+		resp, err := fn()
+		if err == nil {
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+				lastErr = fmt.Errorf("yandex api transient status %d", resp.StatusCode)
+				resp.Body.Close()
+				if attempt < yandexRetries-1 {
+					time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
+					continue
+				}
+			}
+			return resp, nil
+		}
+		lastErr = err
+		if !isTransientNetErr(err) || attempt == yandexRetries-1 {
+			return nil, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
+	}
+	return nil, lastErr
+}
+
+func isTransientNetErr(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "connection aborted") ||
+		strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "failed to respond")
 }
