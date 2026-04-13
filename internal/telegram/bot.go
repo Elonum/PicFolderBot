@@ -29,14 +29,13 @@ type flowAPI interface {
 	ListColors(product string) ([]string, error)
 	ListSections(product, color string) ([]string, error)
 	UploadImage(payload service.UploadPayload) (string, error)
-	CreateFolder(product, color, section, newFolder string) (string, error)
+	CreateFolderAtLevel(level, product, color, section, newFolder string) (string, error)
 }
 
 type sessionMode string
 
 const (
-	modeUpload       sessionMode = "upload"
-	modeCreateFolder sessionMode = "create_folder"
+	modeUpload sessionMode = "upload"
 )
 
 type sessionState struct {
@@ -44,7 +43,7 @@ type sessionState struct {
 	Product    string
 	Color      string
 	Section    string
-	NewFolder  string
+	AddLevel   string
 	FileID     string
 	FileName   string
 	FileMIME   string
@@ -106,12 +105,15 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 	if msg.IsCommand() {
 		switch msg.Command() {
 		case "start", "help":
-			return b.send(chatID, "Отправьте фото с подписью (товар/цвет/папка) или нажмите /upload для пошагового сценария.\nДля создания пустой папки нажмите /createfolder.\nРазрешенные форматы: "+allowedFormatsText)
+			return b.send(chatID, "Отправьте фото с подписью (товар/цвет/папка) или нажмите /upload для пошагового сценария.\nДля создания папок используйте кнопку +Добавить папку в списках.\nРазрешенные форматы: "+allowedFormatsText)
 		case "upload":
 			b.setSession(chatID, &sessionState{Mode: modeUpload, Awaiting: "product", LastAction: time.Now()})
 			return b.askProduct(chatID)
 		case "createfolder":
-			b.setSession(chatID, &sessionState{Mode: modeCreateFolder, Awaiting: "product", LastAction: time.Now()})
+			b.setSession(chatID, &sessionState{Mode: modeUpload, Awaiting: "product", LastAction: time.Now()})
+			if err := b.send(chatID, "Создание папки доступно кнопкой +Добавить папку на каждом уровне."); err != nil {
+				return err
+			}
 			return b.askProduct(chatID)
 		default:
 			return b.send(chatID, "Неизвестная команда. Используйте /help")
@@ -126,18 +128,24 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 	}
 
 	state := b.getSession(chatID)
-	if state != nil && state.Mode == modeCreateFolder && state.Awaiting == "new_folder_name" && msg.Text != "" {
-		state.NewFolder = strings.TrimSpace(msg.Text)
+	if state != nil && state.Awaiting == "new_folder_name" && msg.Text != "" {
+		newFolder := strings.TrimSpace(msg.Text)
 		state.LastAction = time.Now()
-		if state.NewFolder == "" {
+		if newFolder == "" {
 			return b.send(chatID, "Введите непустое имя новой папки.")
 		}
-		target, err := b.flow.CreateFolder(state.Product, state.Color, state.Section, state.NewFolder)
+		level := state.AddLevel
+		target, err := b.flow.CreateFolderAtLevel(level, state.Product, state.Color, state.Section, newFolder)
 		if err != nil {
 			return b.send(chatID, "Не удалось создать папку: "+humanError(err))
 		}
-		b.clearSession(chatID)
-		return b.send(chatID, "Папка создана: "+target)
+		state.AddLevel = level
+		if err = b.send(chatID, "Папка создана: "+target); err != nil {
+			return err
+		}
+		err = b.refreshLevel(chatID, state)
+		state.AddLevel = ""
+		return err
 	}
 
 	state = b.getSession(chatID)
@@ -284,12 +292,9 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 	defer b.api.Request(tgbotapi.NewCallback(cb.ID, "OK"))
 
 	parts := strings.SplitN(data, "|", 3)
-	if len(parts) != 3 || parts[0] != "set" {
+	if len(parts) != 3 {
 		return nil
 	}
-
-	field := parts[1]
-	value := parts[2]
 
 	state := b.getSession(chatID)
 	if state == nil {
@@ -297,29 +302,33 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		b.setSession(chatID, state)
 	}
 
-	switch field {
-	case "product":
-		state.Product = value
-	case "color":
-		state.Color = value
-	case "section":
-		state.Section = value
+	switch parts[0] {
+	case "set":
+		field := parts[1]
+		value := parts[2]
+		switch field {
+		case "product":
+			state.Product = value
+		case "color":
+			state.Color = value
+		case "section":
+			state.Section = value
+		default:
+			return nil
+		}
+	case "add":
+		level := parts[1]
+		if parts[2] != "new" {
+			return nil
+		}
+		state.AddLevel = level
+		state.Awaiting = "new_folder_name"
+		state.LastAction = time.Now()
+		return b.send(chatID, "Введите название новой папки:")
+	default:
+		return nil
 	}
 	state.LastAction = time.Now()
-
-	if state.Mode == modeCreateFolder {
-		if state.Product == "" {
-			return b.askProduct(chatID)
-		}
-		if state.Color == "" {
-			return b.askColor(chatID, state.Product)
-		}
-		if state.Section == "" {
-			return b.askSection(chatID, state.Product, state.Color)
-		}
-		state.Awaiting = "new_folder_name"
-		return b.send(chatID, "Введите название новой пустой папки:")
-	}
 
 	return b.continueUploadFlow(chatID, state)
 }
@@ -332,7 +341,7 @@ func (b *Bot) askProduct(chatID int64) error {
 	if len(options) == 0 {
 		return b.send(chatID, "Список товаров пуст. Проверьте корневую папку на Яндекс.Диске.")
 	}
-	return b.sendWithKeyboard(chatID, "Выберите товар:", "product", options)
+	return b.sendWithKeyboard(chatID, "Выберите товар:", "product", options, service.LevelProduct)
 }
 
 func (b *Bot) askColor(chatID int64, product string) error {
@@ -343,7 +352,7 @@ func (b *Bot) askColor(chatID int64, product string) error {
 	if len(options) == 0 {
 		return b.send(chatID, "Для выбранного товара нет папок цветов.")
 	}
-	return b.sendWithKeyboard(chatID, "Выберите цвет:", "color", options)
+	return b.sendWithKeyboard(chatID, "Выберите цвет:", "color", options, service.LevelColor)
 }
 
 func (b *Bot) askSection(chatID int64, product, color string) error {
@@ -352,9 +361,9 @@ func (b *Bot) askSection(chatID int64, product, color string) error {
 		return b.send(chatID, "Не удалось получить список разделов: "+humanError(err))
 	}
 	if len(options) == 0 {
-		options = []string{"Титульники", "Рич-Контент"}
+		return b.sendWithKeyboard(chatID, "В этой папке цвета пока нет разделов. Нажмите +Добавить папку, чтобы создать нужный раздел.", "section", options, service.LevelSection)
 	}
-	return b.sendWithKeyboard(chatID, "Выберите папку раздела:", "section", options)
+	return b.sendWithKeyboard(chatID, "Выберите папку раздела:", "section", options, service.LevelSection)
 }
 
 func (b *Bot) send(chatID int64, text string) error {
@@ -363,7 +372,7 @@ func (b *Bot) send(chatID int64, text string) error {
 	return err
 }
 
-func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string) error {
+func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string, addLevel string) error {
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(values))
 	for _, v := range values {
 		v = strings.TrimSpace(v)
@@ -373,11 +382,32 @@ func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string
 		data := fmt.Sprintf("set|%s|%s", field, v)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(v, data)))
 	}
+	if addLevel != "" {
+		addBtn := tgbotapi.NewInlineKeyboardButtonData("+Добавить папку", fmt.Sprintf("add|%s|new", addLevel))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(addBtn))
+	}
 
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	_, err := b.api.Send(msg)
 	return err
+}
+
+func (b *Bot) refreshLevel(chatID int64, state *sessionState) error {
+	switch state.AddLevel {
+	case service.LevelProduct:
+		state.Awaiting = "product"
+		return b.askProduct(chatID)
+	case service.LevelColor:
+		state.Awaiting = "color"
+		return b.askColor(chatID, state.Product)
+	case service.LevelSection:
+		state.Awaiting = "section"
+		return b.askSection(chatID, state.Product, state.Color)
+	default:
+		state.Awaiting = ""
+		return b.send(chatID, "Папка создана.")
+	}
 }
 
 func (b *Bot) getSession(chatID int64) *sessionState {

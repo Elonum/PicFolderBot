@@ -26,6 +26,12 @@ type UploadPayload struct {
 	Content  []byte
 }
 
+const (
+	LevelProduct = "product"
+	LevelColor   = "color"
+	LevelSection = "section"
+)
+
 type Flow struct {
 	disk       DiskAPI
 	root       string
@@ -53,14 +59,35 @@ func (f *Flow) ListColors(product string) ([]string, error) {
 	if product == "" {
 		return nil, errors.New("product is empty")
 	}
+	resolved, err := f.resolveExistingName(f.root, product)
+	if err != nil {
+		return nil, err
+	}
+	if resolved != "" {
+		product = resolved
+	}
 	return f.disk.ListSubdirs(joinDisk(f.root, product))
 }
 
 func (f *Flow) ListSections(product, color string) ([]string, error) {
 	p := normalizeToken(product)
-	c := BuildColorFolder(product, color)
+	c := normalizeToken(color)
 	if p == "" || c == "" {
 		return nil, errors.New("product or color is empty")
+	}
+	if resolved, e := f.resolveExistingName(f.root, p); e != nil {
+		return nil, e
+	} else if resolved != "" {
+		p = resolved
+	}
+	resolvedColor, err := f.resolveColorFolder(joinDisk(f.root, p), p, c)
+	if err != nil {
+		return nil, err
+	}
+	if resolvedColor != "" {
+		c = resolvedColor
+	} else {
+		c = BuildColorFolder(p, c)
 	}
 	return f.disk.ListSubdirs(joinDisk(f.root, p, c))
 }
@@ -71,17 +98,37 @@ func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
 	}
 
 	p := normalizeToken(payload.Product)
-	c := BuildColorFolder(payload.Product, payload.Color)
+	c := normalizeToken(payload.Color)
 	s := normalizeToken(payload.Section)
 	if p == "" || c == "" || s == "" {
 		return "", errors.New("product, color and section are required")
 	}
 
-	folderPath := joinDisk(f.root, p, c, s)
-	if err := f.disk.EnsureDir(folderPath); err != nil {
+	if resolved, err := f.resolveExistingName(f.root, p); err != nil {
+		return "", err
+	} else if resolved != "" {
+		p = resolved
+	} else {
+		return "", fmt.Errorf("product folder not found: %s", p)
+	}
+	resolvedColor, err := f.resolveColorFolder(joinDisk(f.root, p), p, c)
+	if err != nil {
 		return "", err
 	}
+	if resolvedColor != "" {
+		c = resolvedColor
+	} else {
+		return "", fmt.Errorf("color folder not found: %s", c)
+	}
+	if resolved, err := f.resolveExistingName(joinDisk(f.root, p, c), s); err != nil {
+		return "", err
+	} else if resolved != "" {
+		s = resolved
+	} else {
+		return "", fmt.Errorf("section folder not found: %s", s)
+	}
 
+	folderPath := joinDisk(f.root, p, c, s)
 	filename := strings.TrimSpace(payload.Filename)
 	if filename == "" {
 		filename = "image.jpg"
@@ -95,16 +142,66 @@ func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
 }
 
 func (f *Flow) CreateFolder(product, color, section, newFolder string) (string, error) {
+	return f.CreateFolderAtLevel(LevelSection, product, color, section, newFolder)
+}
+
+func (f *Flow) CreateFolderAtLevel(level, product, color, section, newFolder string) (string, error) {
 	p := normalizeToken(product)
-	c := BuildColorFolder(product, color)
+	c := normalizeToken(color)
 	s := normalizeToken(section)
 	n := normalizeToken(newFolder)
 
-	if p == "" || c == "" || s == "" || n == "" {
-		return "", errors.New("all fields are required for folder creation")
+	if n == "" {
+		return "", errors.New("new folder name is required")
 	}
 
-	target := joinDisk(f.root, p, c, s, n)
+	parentPath := f.root
+	switch level {
+	case LevelProduct:
+		// Root level: create product folder directly under root.
+	case LevelColor:
+		if p == "" {
+			return "", errors.New("product is required for color level")
+		}
+		if resolved, err := f.resolveExistingName(f.root, p); err != nil {
+			return "", err
+		} else if resolved != "" {
+			p = resolved
+		}
+		parentPath = joinDisk(f.root, p)
+	case LevelSection:
+		if p == "" || c == "" {
+			return "", errors.New("product and color are required for section level")
+		}
+		if resolved, err := f.resolveExistingName(f.root, p); err != nil {
+			return "", err
+		} else if resolved != "" {
+			p = resolved
+		}
+		resolvedColor, err := f.resolveColorFolder(joinDisk(f.root, p), p, c)
+		if err != nil {
+			return "", err
+		}
+		if resolvedColor != "" {
+			c = resolvedColor
+		} else {
+			c = BuildColorFolder(p, c)
+		}
+		parentPath = joinDisk(f.root, p, c)
+	default:
+		return "", errors.New("unknown level")
+	}
+
+	if level == LevelSection && s != "" {
+		if resolved, err := f.resolveExistingName(parentPath, s); err != nil {
+			return "", err
+		} else if resolved != "" {
+			s = resolved
+		}
+		parentPath = joinDisk(parentPath, s)
+	}
+
+	target := joinDisk(parentPath, n)
 	if err := f.disk.EnsureDir(target); err != nil {
 		return "", err
 	}
@@ -127,7 +224,52 @@ func BuildColorFolder(product, color string) string {
 }
 
 func normalizeToken(v string) string {
-	return strings.ToUpper(strings.TrimSpace(v))
+	return strings.TrimSpace(v)
+}
+
+func (f *Flow) resolveExistingName(parentPath, desired string) (string, error) {
+	desired = normalizeToken(desired)
+	if desired == "" {
+		return "", nil
+	}
+
+	items, err := f.disk.ListSubdirs(parentPath)
+	if err != nil {
+		return "", err
+	}
+	for _, name := range items {
+		if strings.EqualFold(name, desired) {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
+func (f *Flow) resolveColorFolder(parentPath, product, desiredColor string) (string, error) {
+	desiredColor = normalizeToken(desiredColor)
+	if desiredColor == "" {
+		return "", nil
+	}
+
+	items, err := f.disk.ListSubdirs(parentPath)
+	if err != nil {
+		return "", err
+	}
+
+	for _, name := range items {
+		if strings.EqualFold(name, desiredColor) {
+			return name, nil
+		}
+	}
+
+	prefixed := BuildColorFolder(product, desiredColor)
+	for _, name := range items {
+		if strings.EqualFold(name, prefixed) {
+			return name, nil
+		}
+	}
+
+	return "", nil
 }
 
 func joinDisk(parts ...string) string {

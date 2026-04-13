@@ -38,5 +38,5 @@ func ParseCaption(caption string) ParsedInput {
 }
 
 func normalizeText(v string) string {
-	return strings.ToUpper(strings.TrimSpace(v))
+	return strings.TrimSpace(v)
 }

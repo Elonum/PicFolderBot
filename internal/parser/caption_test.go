@@ -9,10 +9,10 @@ func TestParseCaption(t *testing.T) {
 	if got.Product != "F05P01" {
 		t.Fatalf("unexpected product: %s", got.Product)
 	}
-	if got.Color != "ЖЁЛТ" {
+	if got.Color != "жёлт" {
 		t.Fatalf("unexpected color: %s", got.Color)
 	}
-	if got.Section != "ТИТУЛЬНИКИ" {
+	if got.Section != "Титульники" {
 		t.Fatalf("unexpected section: %s", got.Section)
 	}
 }
