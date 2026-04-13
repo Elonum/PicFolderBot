@@ -50,6 +50,22 @@ func (f *Flow) ParseCaption(caption string) parser.ParsedInput {
 	return f.parseInput(caption)
 }
 
+func (f *Flow) RootDisplayName() string {
+	root := strings.TrimSpace(f.root)
+	if root == "" {
+		return "disk"
+	}
+
+	trimmed := strings.TrimSuffix(root, "/")
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 && idx < len(trimmed)-1 {
+		return strings.TrimSpace(trimmed[idx+1:])
+	}
+	if strings.EqualFold(trimmed, "disk:") {
+		return "disk"
+	}
+	return strings.TrimSuffix(trimmed, ":")
+}
+
 func (f *Flow) ListProducts() ([]string, error) {
 	return f.disk.ListSubdirs(f.root)
 }
@@ -139,10 +155,6 @@ func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
 		return "", err
 	}
 	return fullPath, nil
-}
-
-func (f *Flow) CreateFolder(product, color, section, newFolder string) (string, error) {
-	return f.CreateFolderAtLevel(LevelSection, product, color, section, newFolder)
 }
 
 func (f *Flow) CreateFolderAtLevel(level, product, color, section, newFolder string) (string, error) {
