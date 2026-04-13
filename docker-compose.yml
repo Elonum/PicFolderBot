@@ -1,0 +1,7 @@
+services:
+  picfolderbot:
+    build: .
+    container_name: picfolderbot
+    restart: unless-stopped
+    env_file:
+      - .env

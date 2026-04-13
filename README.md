@@ -1,0 +1,55 @@
+# PicFolderBot
+
+Telegram-бот на Go для загрузки изображений дизайнеров в структурированные папки Яндекс.Диска.
+
+## Что умеет MVP
+
+- Принимает фото + подпись и пытается извлечь `товар`, `цвет`, `папка`.
+- Если параметров не хватает, предлагает выбор через inline-кнопки.
+- Поддерживает пошаговый режим через `/upload`.
+- Создает новую пустую папку через `/createfolder`.
+- Загружает изображение в путь:
+  `disk:/Товары Innogods/<Товар>/<Товар-Цвет>/<Раздел>/filename.jpg`
+
+## Переменные окружения
+
+Скопируйте `.env.example` в `.env` и заполните:
+
+- `TELEGRAM_BOT_TOKEN` — токен бота из BotFather.
+- `YANDEX_OAUTH_TOKEN` — OAuth-токен Яндекс.Диска.
+- `YANDEX_ROOT_PATH` — корневая папка, например `disk:/Товары Innogods`.
+- `YANDEX_TIMEOUT_SEC` — timeout запросов к API Яндекса.
+
+## Как получить YANDEX_OAUTH_TOKEN
+
+1. Создайте OAuth-приложение в Яндекс OAuth (тип "Веб-сервис").
+2. Запросите scope для Яндекс.Диска: `cloud_api:disk.read cloud_api:disk.write`.
+3. Получите access token через OAuth flow Яндекса.
+4. Запишите токен в `.env` как `YANDEX_OAUTH_TOKEN`.
+
+Если токен или диск нужно переключить на другой аккаунт, достаточно поменять
+`YANDEX_OAUTH_TOKEN` и/или `YANDEX_ROOT_PATH` в `.env` и перезапустить контейнер.
+
+## Локальный запуск
+
+```bash
+go mod tidy
+go run .
+```
+
+## Docker
+
+```bash
+docker compose up --build -d
+docker compose logs -f
+```
+
+## Деплой на сервер (кратко)
+
+1. Скопировать проект на сервер.
+2. Создать `.env`.
+3. Выполнить:
+   - `docker compose build`
+   - `docker compose up -d`
+4. Проверить логи: `docker compose logs -f`.
+

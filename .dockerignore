@@ -1,0 +1,7 @@
+.git
+.idea
+agent-transcripts
+tmp
+*.log
+*.md
+!README.md
