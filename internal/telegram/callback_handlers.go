@@ -72,11 +72,38 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		}
 		if parts[1] == "change" && parts[2] == "path" {
 			state.Section, state.Color = "", ""
+			state.UploadLevel = ""
 			state.PageColor, state.PageSection = 0, 0
 			state.Awaiting = "product"
 			return b.askProduct(chatID)
 		}
 		return nil
+	case "save":
+		if len(parts) != 3 || parts[2] != "here" {
+			return nil
+		}
+		level := parts[1]
+		switch level {
+		case "product":
+			if strings.TrimSpace(state.Product) == "" {
+				return b.send(chatID, "⚠️ Сначала выберите товар.")
+			}
+			state.UploadLevel = "product"
+		case "color":
+			if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" {
+				return b.send(chatID, "⚠️ Сначала выберите товар и цвет.")
+			}
+			state.UploadLevel = "color"
+		case "section":
+			if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" || strings.TrimSpace(state.Section) == "" {
+				return b.send(chatID, "⚠️ Сначала выберите товар, цвет и раздел.")
+			}
+			state.UploadLevel = "section"
+		default:
+			return nil
+		}
+		state.Awaiting = "photo"
+		return b.sendOrEditText(chatID, "📥 Отправьте фото — сохраню в текущую папку.", msgID)
 	case "nav":
 		if len(parts) != 4 {
 			return nil
@@ -115,24 +142,28 @@ func (b *Bot) applySetSelection(state *sessionState, field, value string) {
 	switch field {
 	case "product":
 		state.Product, state.Color, state.Section = value, "", ""
+		state.UploadLevel = ""
 		state.PageColor, state.PageSection = 0, 0
 		if state.SearchField == "product" {
 			state.SearchField, state.SearchQuery = "", ""
 		}
 	case "color":
 		state.Color, state.Section = value, ""
+		state.UploadLevel = ""
 		state.PageSection = 0
 		if state.SearchField == "color" {
 			state.SearchField, state.SearchQuery = "", ""
 		}
 	case "section":
 		state.Section = value
+		state.UploadLevel = ""
 	}
 }
 
 func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, step, mode string) error {
 	if mode == "stay" {
 		state.AddLevel = ""
+		state.UploadLevel = ""
 		switch step {
 		case "product":
 			state.Awaiting = "product"
@@ -153,10 +184,12 @@ func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, ste
 		return b.sendOrEditText(chatID, b.welcomeText(), msgID)
 	case "color":
 		state.Color, state.Section = "", ""
+		state.UploadLevel = ""
 		state.PageColor, state.PageSection = 0, 0
 		return b.askProduct(chatID, msgID)
 	case "section":
 		state.Section = ""
+		state.UploadLevel = ""
 		state.PageSection = 0
 		return b.askColor(chatID, state.Product, msgID)
 	default:

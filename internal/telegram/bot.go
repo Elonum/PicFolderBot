@@ -29,6 +29,7 @@ type flowAPI interface {
 	ListColors(product string) ([]string, error)
 	ListSections(product, color string) ([]string, error)
 	UploadImage(payload service.UploadPayload) (string, error)
+	UploadImageAtLevel(level string, payload service.UploadPayload) (string, error)
 	CreateFolderAtLevel(level, product, color, section, newFolder string) (string, error)
 }
 
@@ -36,6 +37,7 @@ type sessionState struct {
 	Product     string
 	Color       string
 	Section     string
+	UploadLevel string
 	AddLevel    string
 	SearchQuery string
 	SearchField string
@@ -72,6 +74,7 @@ type albumBuffer struct {
 	Product      string
 	Color        string
 	Section      string
+	UploadLevel  string
 	Items        []albumItem
 	Timer        *time.Timer
 	Notified     bool

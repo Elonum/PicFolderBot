@@ -36,7 +36,9 @@ func (b *Bot) askColor(chatID int64, product string, editMessageID ...int) error
 		return b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
 	}
 	if len(options) == 0 {
-		return b.sendWithKeyboard(chatID, "🎨 Для выбранного товара пока нет папок цветов.\n"+b.pathHint(product, "", "")+"\nСоздайте первую кнопкой ниже.", "color", options, service.LevelColor, "color", 0, extractEditID(editMessageID...))
+		return b.sendWithKeyboard(chatID, "🎨 Для выбранного товара пока нет папок цветов.\n"+b.pathHint(product, "", "")+"\nСоздайте первую кнопкой ниже.", "color", options, service.LevelColor, "color", 0, extractEditID(editMessageID...),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|product|here")),
+		)
 	}
 	state := b.getSession(chatID)
 	page := 0
@@ -48,7 +50,9 @@ func (b *Bot) askColor(chatID int64, product string, editMessageID ...int) error
 	if state != nil && state.SearchField == "color" && strings.TrimSpace(state.SearchQuery) != "" {
 		text += "\n🔎 Поиск: " + state.SearchQuery
 	}
-	return b.sendWithKeyboard(chatID, text, "color", options, service.LevelColor, "color", page, extractEditID(editMessageID...))
+	return b.sendWithKeyboard(chatID, text, "color", options, service.LevelColor, "color", page, extractEditID(editMessageID...),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|product|here")),
+	)
 }
 
 func (b *Bot) askSection(chatID int64, product, color string, editMessageID ...int) error {
@@ -57,14 +61,18 @@ func (b *Bot) askSection(chatID int64, product, color string, editMessageID ...i
 		return b.send(chatID, "❌ Не удалось получить список разделов:\n"+humanError(err))
 	}
 	if len(options) == 0 {
-		return b.sendWithKeyboard(chatID, "🗂️ В этой папке цвета пока нет разделов.\n"+b.pathHint(product, color, "")+"\nСоздайте нужный раздел кнопкой ниже.", "section", options, service.LevelSection, "section", 0, extractEditID(editMessageID...))
+		return b.sendWithKeyboard(chatID, "🗂️ В этой папке цвета пока нет разделов.\n"+b.pathHint(product, color, "")+"\nСоздайте нужный раздел кнопкой ниже.", "section", options, service.LevelSection, "section", 0, extractEditID(editMessageID...),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|color|here")),
+		)
 	}
 	state := b.getSession(chatID)
 	page := 0
 	if state != nil {
 		page = state.PageSection
 	}
-	return b.sendWithKeyboard(chatID, "🗂️ Выберите раздел:\n"+b.pathHint(product, color, "")+"\n✍️ Можно ввести название текстом или полный путь.", "section", options, service.LevelSection, "section", page, extractEditID(editMessageID...))
+	return b.sendWithKeyboard(chatID, "🗂️ Выберите раздел:\n"+b.pathHint(product, color, "")+"\n✍️ Можно ввести название текстом или полный путь.", "section", options, service.LevelSection, "section", page, extractEditID(editMessageID...),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|color|here")),
+	)
 }
 
 func (b *Bot) send(chatID int64, text string) error {

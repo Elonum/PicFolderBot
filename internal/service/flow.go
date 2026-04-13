@@ -109,6 +109,10 @@ func (f *Flow) ListSections(product, color string) ([]string, error) {
 }
 
 func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
+	return f.UploadImageAtLevel(LevelSection, payload)
+}
+
+func (f *Flow) UploadImageAtLevel(level string, payload UploadPayload) (string, error) {
 	if len(payload.Content) == 0 {
 		return "", errors.New("file is empty")
 	}
@@ -116,8 +120,8 @@ func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
 	p := normalizeToken(payload.Product)
 	c := normalizeToken(payload.Color)
 	s := normalizeToken(payload.Section)
-	if p == "" || c == "" || s == "" {
-		return "", errors.New("product, color and section are required")
+	if p == "" {
+		return "", errors.New("product is required")
 	}
 
 	if resolved, err := f.resolveExistingName(f.root, p); err != nil {
@@ -127,24 +131,37 @@ func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
 	} else {
 		return "", fmt.Errorf("product folder not found: %s", p)
 	}
-	resolvedColor, err := f.resolveColorFolder(joinDisk(f.root, p), p, c)
-	if err != nil {
-		return "", err
+
+	folderPath := joinDisk(f.root, p)
+	if level == LevelColor || level == LevelSection {
+		if c == "" {
+			return "", errors.New("color is required")
+		}
+		resolvedColor, err := f.resolveColorFolder(joinDisk(f.root, p), p, c)
+		if err != nil {
+			return "", err
+		}
+		if resolvedColor != "" {
+			c = resolvedColor
+		} else {
+			return "", fmt.Errorf("color folder not found: %s", c)
+		}
+		folderPath = joinDisk(f.root, p, c)
 	}
-	if resolvedColor != "" {
-		c = resolvedColor
-	} else {
-		return "", fmt.Errorf("color folder not found: %s", c)
-	}
-	if resolved, err := f.resolveExistingName(joinDisk(f.root, p, c), s); err != nil {
-		return "", err
-	} else if resolved != "" {
-		s = resolved
-	} else {
-		return "", fmt.Errorf("section folder not found: %s", s)
+	if level == LevelSection {
+		if s == "" {
+			return "", errors.New("section is required")
+		}
+		if resolved, err := f.resolveExistingName(joinDisk(f.root, p, c), s); err != nil {
+			return "", err
+		} else if resolved != "" {
+			s = resolved
+		} else {
+			return "", fmt.Errorf("section folder not found: %s", s)
+		}
+		folderPath = joinDisk(f.root, p, c, s)
 	}
 
-	folderPath := joinDisk(f.root, p, c, s)
 	filename := strings.TrimSpace(payload.Filename)
 	if filename == "" {
 		filename = "image.jpg"

@@ -27,8 +27,8 @@ func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 	}
 	fileName := buildFileName(fmt.Sprintf("img_%d", time.Now().Unix()), mimeType)
 	if msg.MediaGroupID != "" {
-		p, c, s := b.resolveUploadContext(chatID, msg.Caption)
-		return b.enqueueAlbumItem(chatID, msg.MediaGroupID, albumItem{Filename: fileName, MimeType: mimeType, Content: content}, p, c, s)
+		p, c, s, lvl := b.resolveUploadContext(chatID, msg.Caption)
+		return b.enqueueAlbumItem(chatID, msg.MediaGroupID, albumItem{Filename: fileName, MimeType: mimeType, Content: content}, p, c, s, lvl)
 	}
 
 	state := b.getSession(chatID)
@@ -67,8 +67,8 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) error {
 	}
 	fileName := buildFileName(doc.FileName, mimeType)
 	if msg.MediaGroupID != "" {
-		p, c, s := b.resolveUploadContext(chatID, msg.Caption)
-		return b.enqueueAlbumItem(chatID, msg.MediaGroupID, albumItem{Filename: fileName, MimeType: mimeType, Content: content}, p, c, s)
+		p, c, s, lvl := b.resolveUploadContext(chatID, msg.Caption)
+		return b.enqueueAlbumItem(chatID, msg.MediaGroupID, albumItem{Filename: fileName, MimeType: mimeType, Content: content}, p, c, s, lvl)
 	}
 
 	state := b.getSession(chatID)
@@ -86,24 +86,31 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) error {
 }
 
 func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageID ...int) error {
+	level := strings.TrimSpace(state.UploadLevel)
+	if level == "" {
+		level = service.LevelSection
+	}
+
 	if state.Product == "" {
 		state.Awaiting = "product"
 		return b.askProduct(chatID, editMessageID...)
 	}
-	if state.Color == "" {
+	if level != service.LevelProduct && state.Color == "" {
 		state.Awaiting = "color"
 		return b.askColor(chatID, state.Product, editMessageID...)
 	}
-	if state.Section == "" {
+	if level == service.LevelSection && state.Section == "" {
 		state.Awaiting = "section"
 		return b.askSection(chatID, state.Product, state.Color, editMessageID...)
 	}
 	if len(state.FileBytes) == 0 {
 		state.Awaiting = "photo"
-		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
+		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|section|here")),
+		)
 	}
 
-	target, err := b.flow.UploadImage(service.UploadPayload{
+	target, err := b.flow.UploadImageAtLevel(level, service.UploadPayload{
 		Product: state.Product, Color: state.Color, Section: state.Section,
 		Filename: state.FileName, MimeType: state.FileMIME, Content: state.FileBytes,
 	})
@@ -120,11 +127,12 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 	)
 }
 
-func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string, string) {
+func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string, string, string) {
 	state := b.getSession(chatID)
-	var product, color, section string
+	var product, color, section, level string
 	if state != nil {
 		product, color, section = strings.TrimSpace(state.Product), strings.TrimSpace(state.Color), strings.TrimSpace(state.Section)
+		level = strings.TrimSpace(state.UploadLevel)
 	}
 	parsed := b.flow.ParseCaption(caption)
 	if product == "" {
@@ -136,5 +144,5 @@ func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string
 	if section == "" {
 		section = strings.TrimSpace(parsed.Section)
 	}
-	return product, color, section
+	return product, color, section, level
 }

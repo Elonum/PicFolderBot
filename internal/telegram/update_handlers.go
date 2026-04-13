@@ -241,7 +241,7 @@ func resolveTypedOption(options []string, input string) string {
 	return ""
 }
 
-func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, product, color, section string) error {
+func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, product, color, section, uploadLevel string) error {
 	key := fmt.Sprintf("%d:%s", chatID, groupID)
 	b.albumsMu.Lock()
 	buf := b.albums[key]
@@ -257,6 +257,9 @@ func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, pro
 	}
 	if buf.Section == "" && section != "" {
 		buf.Section = section
+	}
+	if buf.UploadLevel == "" && uploadLevel != "" {
+		buf.UploadLevel = uploadLevel
 	}
 	buf.Items = append(buf.Items, item)
 	if buf.Timer != nil {
@@ -285,26 +288,49 @@ func (b *Bot) flushAlbum(key string) {
 	b.albumsMu.Unlock()
 
 	product, color, section := strings.TrimSpace(buf.Product), strings.TrimSpace(buf.Color), strings.TrimSpace(buf.Section)
-	if product == "" || color == "" || section == "" {
-		_ = b.send(buf.ChatID, "⚠️ Для пакетной загрузки сначала выберите путь (товар/цвет/раздел), затем отправьте файлы.")
+	level := strings.TrimSpace(buf.UploadLevel)
+	if level == "" {
+		level = service.LevelSection
+	}
+	if product == "" || (level != service.LevelProduct && color == "") || (level == service.LevelSection && section == "") {
+		_ = b.send(buf.ChatID, "⚠️ Для пакетной загрузки сначала выберите путь, затем отправьте файлы.")
 		return
 	}
 	success, fail := 0, 0
+	savedFolder := ""
 	for _, it := range buf.Items {
-		_, err := b.flow.UploadImage(service.UploadPayload{
+		target, err := b.flow.UploadImageAtLevel(level, service.UploadPayload{
 			Product: product, Color: color, Section: section, Filename: it.Filename, MimeType: it.MimeType, Content: it.Content,
 		})
 		if err != nil {
 			fail++
 			continue
 		}
+		if savedFolder == "" {
+			savedFolder = folderFromTarget(target)
+		}
 		success++
 	}
 	result := fmt.Sprintf("✅ Пакетная загрузка завершена.\nУспешно: %d\nС ошибками: %d", success, fail)
+	if savedFolder != "" {
+		result += "\nСохранено в:\n" + savedFolder
+	}
 	_ = b.sendWithKeyboard(buf.ChatID, result+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
 			tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
 		),
 	)
+}
+
+func folderFromTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	idx := strings.LastIndex(target, "/")
+	if idx <= 0 {
+		return target
+	}
+	return target[:idx]
 }
