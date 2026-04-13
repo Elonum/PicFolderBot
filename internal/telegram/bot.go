@@ -106,7 +106,7 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 	if msg.IsCommand() {
 		switch msg.Command() {
 		case "start", "help":
-			return b.send(chatID, "Отправьте фото с подписью (товар/цвет/папка) или нажмите /upload для пошагового сценария.\nДля создания пустой папки нажмите /createfolder.")
+			return b.send(chatID, "Отправьте фото с подписью (товар/цвет/папка) или нажмите /upload для пошагового сценария.\nДля создания пустой папки нажмите /createfolder.\nРазрешенные форматы: "+allowedFormatsText)
 		case "upload":
 			b.setSession(chatID, &sessionState{Mode: modeUpload, Awaiting: "product", LastAction: time.Now()})
 			return b.askProduct(chatID)
@@ -120,6 +120,9 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 
 	if msg.Photo != nil {
 		return b.handlePhoto(msg)
+	}
+	if msg.Document != nil {
+		return b.handleDocument(msg)
 	}
 
 	state := b.getSession(chatID)
@@ -137,7 +140,12 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		return b.send(chatID, "Папка создана: "+target)
 	}
 
-	return nil
+	state = b.getSession(chatID)
+	if state != nil && state.Mode == modeUpload && state.Awaiting == "photo" {
+		return b.send(chatID, "Ожидаю изображение. Разрешенные форматы: "+allowedFormatsText)
+	}
+
+	return b.send(chatID, "Отправьте фото с подписью или используйте /upload для пошаговой загрузки.")
 }
 
 func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
@@ -153,8 +161,8 @@ func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 	if err != nil {
 		return b.send(chatID, "Не удалось скачать изображение.")
 	}
-	if !strings.HasPrefix(mimeType, "image/") {
-		return b.send(chatID, "Поддерживаются только изображения.")
+	if !isAllowedImageMIME(mimeType) {
+		return b.send(chatID, "Неподдерживаемый формат изображения. Разрешенные форматы: "+allowedFormatsText)
 	}
 
 	fileName := buildFileName(fmt.Sprintf("img_%d", time.Now().Unix()), mimeType)
@@ -176,6 +184,57 @@ func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 		b.setSession(chatID, state)
 	} else {
 		state.FileID = file.FileID
+		state.FileName = fileName
+		state.FileMIME = mimeType
+		state.FileBytes = content
+		state.LastAction = time.Now()
+	}
+
+	return b.continueUploadFlow(chatID, state)
+}
+
+func (b *Bot) handleDocument(msg *tgbotapi.Message) error {
+	chatID := msg.Chat.ID
+	doc := msg.Document
+	if doc == nil {
+		return nil
+	}
+	if !isAllowedImageMIME(doc.MimeType) && !isAllowedImageExtension(doc.FileName) {
+		return b.send(chatID, "Неподдерживаемый формат файла. Разрешенные форматы: "+allowedFormatsText)
+	}
+
+	fileURL, err := b.api.GetFileDirectURL(doc.FileID)
+	if err != nil {
+		return b.send(chatID, "Не удалось получить файл из Telegram.")
+	}
+
+	content, mimeType, err := downloadFile(fileURL)
+	if err != nil {
+		return b.send(chatID, "Не удалось скачать изображение.")
+	}
+	if !isAllowedImageMIME(mimeType) && !isAllowedImageExtension(doc.FileName) {
+		return b.send(chatID, "Неподдерживаемый формат файла. Разрешенные форматы: "+allowedFormatsText)
+	}
+
+	fileName := buildFileName(doc.FileName, mimeType)
+
+	state := b.getSession(chatID)
+	if state == nil {
+		parsed := b.flow.ParseCaption(msg.Caption)
+		state = &sessionState{
+			Mode:       modeUpload,
+			Product:    parsed.Product,
+			Color:      parsed.Color,
+			Section:    parsed.Section,
+			FileID:     doc.FileID,
+			FileName:   fileName,
+			FileMIME:   mimeType,
+			FileBytes:  content,
+			LastAction: time.Now(),
+		}
+		b.setSession(chatID, state)
+	} else {
+		state.FileID = doc.FileID
 		state.FileName = fileName
 		state.FileMIME = mimeType
 		state.FileBytes = content
@@ -378,23 +437,19 @@ func humanError(err error) string {
 }
 
 func inferExtension(mimeType string) string {
-	switch mimeType {
-	case "image/png":
-		return ".png"
-	case "image/webp":
-		return ".webp"
-	default:
-		return ".jpg"
-	}
+	return extensionByMIME(mimeType)
 }
 
 func buildFileName(base string, mimeType string) string {
-	base = strings.TrimSpace(base)
+	base = strings.TrimSpace(filepath.Base(base))
+	base = strings.ReplaceAll(base, "/", "_")
+	base = strings.ReplaceAll(base, "\\", "_")
 	if base == "" {
 		base = fmt.Sprintf("img_%d", time.Now().Unix())
 	}
-	ext := filepath.Ext(base)
-	if ext == "" {
+	ext := strings.ToLower(filepath.Ext(base))
+	if ext == "" || !isAllowedImageExtension(base) {
+		base = strings.TrimSuffix(base, filepath.Ext(base))
 		base += inferExtension(mimeType)
 	}
 	return base
