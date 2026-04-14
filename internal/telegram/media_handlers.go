@@ -12,6 +12,9 @@ import (
 
 func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 	chatID := msg.Chat.ID
+	if len(msg.Photo) == 0 {
+		return b.send(chatID, "⚠️ Не удалось прочитать изображение. Отправьте фото еще раз.")
+	}
 	file := msg.Photo[len(msg.Photo)-1]
 
 	fileURL, err := b.api.GetFileDirectURL(file.FileID)
@@ -22,8 +25,10 @@ func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 	if err != nil {
 		return b.send(chatID, "❌ Не удалось скачать изображение.")
 	}
+	// Telegram message.Photo is always an image payload selected via "Send an image".
+	// Some Telegram CDN responses can expose generic MIME values, so we force safe image fallback.
 	if !isAllowedImageMIME(mimeType) {
-		return b.send(chatID, "⚠️ Неподдерживаемый формат изображения.\nРазрешенные форматы: "+allowedFormatsText)
+		mimeType = "image/jpeg"
 	}
 	fileName := buildFileName(fmt.Sprintf("img_%d", time.Now().Unix()), mimeType)
 	if msg.MediaGroupID != "" {
@@ -103,11 +108,12 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 		state.Awaiting = "section"
 		return b.askSection(chatID, state.Product, state.Color, editMessageID...)
 	}
+	if handled, err := b.processPendingAlbumIfReady(chatID, state); handled || err != nil {
+		return err
+	}
 	if len(state.FileBytes) == 0 {
 		state.Awaiting = "photo"
-		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...),
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|section|here")),
-		)
+		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
 	}
 
 	target, err := b.flow.UploadImageAtLevel(level, service.UploadPayload{

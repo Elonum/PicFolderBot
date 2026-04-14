@@ -34,22 +34,23 @@ type flowAPI interface {
 }
 
 type sessionState struct {
-	Product     string
-	Color       string
-	Section     string
-	UploadLevel string
-	AddLevel    string
-	SearchQuery string
-	SearchField string
-	PageProduct int
-	PageColor   int
-	PageSection int
-	FileID      string
-	FileName    string
-	FileMIME    string
-	FileBytes   []byte
-	ValueMap    map[string]string
-	Awaiting    string
+	Product         string
+	Color           string
+	Section         string
+	UploadLevel     string
+	AddLevel        string
+	SearchQuery     string
+	SearchField     string
+	PageProduct     int
+	PageColor       int
+	PageSection     int
+	FileID          string
+	FileName        string
+	FileMIME        string
+	FileBytes       []byte
+	ValueMap        map[string]string
+	PendingAlbumKey string
+	Awaiting        string
 }
 
 type Bot struct {

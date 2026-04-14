@@ -271,6 +271,12 @@ func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, pro
 		buf.Notified = true
 	}
 	b.albumsMu.Unlock()
+	state := b.getSession(chatID)
+	if state == nil {
+		state = &sessionState{}
+		b.setSession(chatID, state)
+	}
+	state.PendingAlbumKey = key
 	if needNotify {
 		return b.send(chatID, "📦 Получено несколько файлов. Загружаю одним пакетом...")
 	}
@@ -284,18 +290,26 @@ func (b *Bot) flushAlbum(key string) {
 		b.albumsMu.Unlock()
 		return
 	}
-	delete(b.albums, key)
-	b.albumsMu.Unlock()
-
-	product, color, section := strings.TrimSpace(buf.Product), strings.TrimSpace(buf.Color), strings.TrimSpace(buf.Section)
+	b.fillAlbumPathFromSession(buf)
 	level := strings.TrimSpace(buf.UploadLevel)
 	if level == "" {
 		level = service.LevelSection
 	}
-	if product == "" || (level != service.LevelProduct && color == "") || (level == service.LevelSection && section == "") {
-		_ = b.send(buf.ChatID, "⚠️ Для пакетной загрузки сначала выберите путь, затем отправьте файлы.")
+	if b.isAlbumPathMissing(level, buf.Product, buf.Color, buf.Section) {
+		b.albumsMu.Unlock()
+		state := b.getSession(buf.ChatID)
+		if state == nil {
+			state = &sessionState{}
+			b.setSession(buf.ChatID, state)
+		}
+		state.PendingAlbumKey = key
+		_ = b.send(buf.ChatID, "⚠️ Для пакетной загрузки выберите путь, и я автоматически загружу уже отправленные файлы.")
 		return
 	}
+	delete(b.albums, key)
+	b.albumsMu.Unlock()
+
+	product, color, section := strings.TrimSpace(buf.Product), strings.TrimSpace(buf.Color), strings.TrimSpace(buf.Section)
 	success, fail := 0, 0
 	savedFolder := ""
 	for _, it := range buf.Items {
@@ -315,12 +329,74 @@ func (b *Bot) flushAlbum(key string) {
 	if savedFolder != "" {
 		result += "\nСохранено в:\n" + savedFolder
 	}
+	state := b.getSession(buf.ChatID)
+	if state != nil && state.PendingAlbumKey == key {
+		state.PendingAlbumKey = ""
+	}
 	_ = b.sendWithKeyboard(buf.ChatID, result+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
 			tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
 		),
 	)
+}
+
+func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (bool, error) {
+	key := strings.TrimSpace(state.PendingAlbumKey)
+	if key == "" {
+		return false, nil
+	}
+	b.albumsMu.Lock()
+	buf := b.albums[key]
+	if buf == nil {
+		b.albumsMu.Unlock()
+		state.PendingAlbumKey = ""
+		return false, nil
+	}
+	b.fillAlbumPathFromSession(buf)
+	level := strings.TrimSpace(buf.UploadLevel)
+	if level == "" {
+		level = service.LevelSection
+	}
+	missing := b.isAlbumPathMissing(level, buf.Product, buf.Color, buf.Section)
+	b.albumsMu.Unlock()
+	if missing {
+		return false, nil
+	}
+	go b.flushAlbum(key)
+	return true, b.send(chatID, "⏳ Путь выбран. Загружаю ранее отправленный пакет...")
+}
+
+func (b *Bot) fillAlbumPathFromSession(buf *albumBuffer) {
+	state := b.getSession(buf.ChatID)
+	if state == nil {
+		return
+	}
+	if strings.TrimSpace(buf.Product) == "" {
+		buf.Product = state.Product
+	}
+	if strings.TrimSpace(buf.Color) == "" {
+		buf.Color = state.Color
+	}
+	if strings.TrimSpace(buf.Section) == "" {
+		buf.Section = state.Section
+	}
+	if strings.TrimSpace(buf.UploadLevel) == "" {
+		buf.UploadLevel = state.UploadLevel
+	}
+}
+
+func (b *Bot) isAlbumPathMissing(level, product, color, section string) bool {
+	product = strings.TrimSpace(product)
+	color = strings.TrimSpace(color)
+	section = strings.TrimSpace(section)
+	if product == "" {
+		return true
+	}
+	if level != service.LevelProduct && color == "" {
+		return true
+	}
+	return level == service.LevelSection && section == ""
 }
 
 func folderFromTarget(target string) string {
