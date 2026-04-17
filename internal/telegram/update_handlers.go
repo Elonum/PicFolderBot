@@ -445,6 +445,11 @@ func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, pro
 }
 
 func (b *Bot) flushAlbum(key string) {
+	if !b.tryMarkAlbumFlushing(key) {
+		return
+	}
+	defer b.unmarkAlbumFlushing(key)
+
 	b.albumsMu.Lock()
 	buf := b.albums[key]
 	if buf == nil {
@@ -561,6 +566,30 @@ func (b *Bot) flushAlbum(key string) {
 		b.setSession(buf.ChatID, state)
 	}
 	_ = b.sendCustomKeyboard(buf.ChatID, msgBatchUploadSuccess(result), uploadSuccessRows(), 0)
+}
+
+func (b *Bot) tryMarkAlbumFlushing(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
+	if _, ok := b.flushing[key]; ok {
+		return false
+	}
+	b.flushing[key] = struct{}{}
+	return true
+}
+
+func (b *Bot) unmarkAlbumFlushing(key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	b.flushMu.Lock()
+	delete(b.flushing, key)
+	b.flushMu.Unlock()
 }
 
 func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (bool, error) {

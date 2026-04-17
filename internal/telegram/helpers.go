@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -16,6 +15,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"PicFolderBot/internal/logging"
 	"PicFolderBot/internal/observability"
 )
 
@@ -279,7 +279,13 @@ func (b *Bot) sendWithRetry(chattable tgbotapi.Chattable) error {
 		if attempt > 0 {
 			observability.TelegramRetry()
 		}
-		log.Printf("telegram send retryable=%v attempt=%d err=%v", isTransientTelegramError(err), attempt+1, err)
+		logging.Warn(
+			"telegram send failed, retry decision",
+			"component", "telegram",
+			"retryable", isTransientTelegramError(err),
+			"attempt", attempt+1,
+			"error", err,
+		)
 		if !isTransientTelegramError(err) || attempt == telegramSendRetries-1 {
 			return err
 		}

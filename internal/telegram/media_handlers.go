@@ -7,6 +7,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"PicFolderBot/internal/logging"
 	"PicFolderBot/internal/service"
 )
 
@@ -161,6 +162,7 @@ func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string
 
 func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionState, editMessageID int) error {
 	if b.uploader == nil {
+		logging.Critical("uploader is not initialized", "component", "telegram")
 		return b.send(chatID, msgUploaderNotInitialized)
 	}
 	payload := service.UploadPayload{

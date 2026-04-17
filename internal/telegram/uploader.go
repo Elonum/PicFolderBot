@@ -1,8 +1,10 @@
 package telegram
 
 import (
+	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"PicFolderBot/internal/service"
 )
@@ -62,15 +64,34 @@ func (u *uploader) start() {
 }
 
 func (u *uploader) stop() {
+	_ = u.stopWithTimeout(context.Background(), 0)
+}
+
+func (u *uploader) stopWithTimeout(ctx context.Context, timeout time.Duration) error {
 	u.mu.Lock()
 	if u.closed {
 		u.mu.Unlock()
-		return
+		return nil
 	}
 	u.closed = true
 	u.mu.Unlock()
 	close(u.queue)
-	u.wg.Wait()
+	done := make(chan struct{}, 1)
+	go func() {
+		u.wg.Wait()
+		done <- struct{}{}
+	}()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (u *uploader) submit(level string, payload service.UploadPayload) <-chan uploadResult {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"PicFolderBot/internal/logging"
 	"PicFolderBot/internal/observability"
 )
 
@@ -70,12 +70,15 @@ func (c *Client) ListSubdirs(diskPath string) ([]string, error) {
 		return c.http.Do(req)
 	})
 	if err != nil {
+		maybeAlertYandexError("list_subdirs", diskPath, err)
 		return nil, fmt.Errorf("yandex list error: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, decodeAPIError(resp)
+		apiErr := decodeAPIError(resp)
+		maybeAlertYandexError("list_subdirs", diskPath, apiErr)
+		return nil, apiErr
 	}
 
 	var payload resourceResp
@@ -102,6 +105,7 @@ func (c *Client) EnsureDir(diskPath string) error {
 	for i := 1; i < len(parts); i++ {
 		current += "/" + parts[i]
 		if err := c.mkdir(current); err != nil {
+			maybeAlertYandexError("ensure_dir", current, err)
 			return err
 		}
 	}
@@ -126,12 +130,15 @@ func (c *Client) UploadFile(diskPath string, data []byte, mimeType string) error
 		return c.http.Do(req)
 	})
 	if err != nil {
+		maybeAlertYandexError("upload_file", diskPath, err)
 		return fmt.Errorf("upload content error: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("upload failed with status %d", resp.StatusCode)
+		upErr := fmt.Errorf("upload failed with status %d", resp.StatusCode)
+		maybeAlertYandexError("upload_file", diskPath, upErr)
+		return upErr
 	}
 	return nil
 }
@@ -150,6 +157,7 @@ func (c *Client) mkdir(diskPath string) error {
 		return c.http.Do(req)
 	})
 	if err != nil {
+		maybeAlertYandexError("mkdir", diskPath, err)
 		return fmt.Errorf("mkdir error: %w", err)
 	}
 	defer resp.Body.Close()
@@ -157,7 +165,9 @@ func (c *Client) mkdir(diskPath string) error {
 	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusConflict {
 		return nil
 	}
-	return decodeAPIError(resp)
+	apiErr := decodeAPIError(resp)
+	maybeAlertYandexError("mkdir", diskPath, apiErr)
+	return apiErr
 }
 
 func (c *Client) getUploadURL(diskPath string) (string, error) {
@@ -175,12 +185,15 @@ func (c *Client) getUploadURL(diskPath string) (string, error) {
 		return c.http.Do(req)
 	})
 	if err != nil {
+		maybeAlertYandexError("get_upload_url", diskPath, err)
 		return "", fmt.Errorf("get upload url error: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", decodeAPIError(resp)
+		apiErr := decodeAPIError(resp)
+		maybeAlertYandexError("get_upload_url", diskPath, apiErr)
+		return "", apiErr
 	}
 
 	var payload operationResp
@@ -228,13 +241,24 @@ func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response,
 				if attempt > 0 {
 					observability.YadiskRetry()
 				}
-				log.Printf("yadisk transient status=%d attempt=%d", resp.StatusCode, attempt+1)
+				logging.Warn(
+					"yadisk transient status",
+					"component", "yadisk",
+					"status", resp.StatusCode,
+					"attempt", attempt+1,
+				)
 				lastErr = fmt.Errorf("yandex api transient status %d", resp.StatusCode)
 				resp.Body.Close()
 				if attempt < yandexRetries-1 {
 					time.Sleep(time.Duration(attempt+1) * 300 * time.Millisecond)
 					continue
 				}
+				logging.Alert(
+					"yadisk retries exhausted by transient status",
+					"component", "yadisk",
+					"status", resp.StatusCode,
+					"attempts", yandexRetries,
+				)
 			}
 			return resp, nil
 		}
@@ -242,7 +266,13 @@ func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response,
 		if attempt > 0 {
 			observability.YadiskRetry()
 		}
-		log.Printf("yadisk request retryable=%v attempt=%d err=%v", isTransientNetErr(err), attempt+1, err)
+		logging.Warn(
+			"yadisk request failed, retry decision",
+			"component", "yadisk",
+			"retryable", isTransientNetErr(err),
+			"attempt", attempt+1,
+			"error", err,
+		)
 		if !isTransientNetErr(err) || attempt == yandexRetries-1 {
 			return nil, err
 		}
@@ -262,4 +292,37 @@ func isTransientNetErr(err error) bool {
 		strings.Contains(msg, "connection aborted") ||
 		strings.Contains(msg, "unexpected eof") ||
 		strings.Contains(msg, "failed to respond")
+}
+
+func maybeAlertYandexError(op string, diskPath string, err error) {
+	if err == nil {
+		return
+	}
+	low := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(low, "unauthorized"),
+		strings.Contains(low, "(401)"),
+		strings.Contains(low, "forbidden"),
+		strings.Contains(low, "(403)"):
+		logging.Alert(
+			"yadisk authorization error",
+			"component", "yadisk",
+			"op", op,
+			"path", diskPath,
+			"error", err,
+		)
+	case strings.Contains(low, "status 5"),
+		strings.Contains(low, "(5"),
+		strings.Contains(low, "too many requests"),
+		strings.Contains(low, "timeout"),
+		strings.Contains(low, "connection reset"),
+		strings.Contains(low, "failed to respond"):
+		logging.Alert(
+			"yadisk unstable upstream or network",
+			"component", "yadisk",
+			"op", op,
+			"path", diskPath,
+			"error", err,
+		)
+	}
 }
