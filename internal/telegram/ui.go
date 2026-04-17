@@ -125,6 +125,13 @@ func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string
 	if len(ctrl) > 0 {
 		rows = append(rows, ctrl)
 	}
+	// Refresh + Home actions for faster recovery and up-to-date lists.
+	if field == "product" || field == "color" || field == "section" {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Обновить список", fmt.Sprintf("refresh|%s|x", field)),
+			tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
+		))
+	}
 	if field == "product" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔎 Поиск товара", "search|product|start")))
 	}

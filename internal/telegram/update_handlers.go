@@ -49,6 +49,8 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 				b.setSession(chatID, state)
 			}
 			return b.sendSearchMenu(chatID, state)
+		case "recent":
+			return b.sendRecentMenu(chatID)
 		case "cancel":
 			b.clearSession(chatID)
 			return b.send(chatID, "🛑 Действие отменено. Нажмите /upload, чтобы начать заново.")
@@ -78,6 +80,15 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		state.AddLevel = level
 		if err = b.send(chatID, "✅ Папка создана:\n"+target); err != nil {
 			return err
+		}
+		// Invalidate cached listing for this level so the new folder appears immediately.
+		switch level {
+		case service.LevelProduct:
+			b.flow.InvalidateProducts()
+		case service.LevelColor:
+			b.flow.InvalidateColors(state.Product)
+		case service.LevelSection:
+			b.flow.InvalidateSections(state.Product, state.Color)
 		}
 		err = b.refreshLevel(chatID, state)
 		state.AddLevel = ""
@@ -160,14 +171,7 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 	if state != nil && state.Awaiting == "photo" {
 		return b.send(chatID, "🖼️ Ожидаю изображение.\nРазрешенные форматы: "+allowedFormatsText)
 	}
-	if state != nil && state.Awaiting == "post_upload_choice" {
-		return b.sendWithKeyboard(chatID, "📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
-				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
-			),
-		)
-	}
+	// Sticky mode: no dedicated "post success" state is required.
 	return b.send(chatID, "ℹ️ Отправьте фото с подписью или используйте /upload для пошаговой загрузки.")
 }
 
@@ -329,8 +333,28 @@ func (b *Bot) sendResolveHint(chatID int64, field string, res optionResolution, 
 	extra := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить запрос", fmt.Sprintf("search|%s|start", field))),
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📋 Показать список", fmt.Sprintf("show|%s|list", field))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x")),
 	}
 	return b.sendWithKeyboard(chatID, text, field, res.Suggestions, "", backStep, 0, 0, extra...)
+}
+
+func (b *Bot) sendRecentMenu(chatID int64) error {
+	items := b.recent.List(chatID)
+	if len(items) == 0 {
+		return b.send(chatID, "🕘 Пока нет последних папок. Загрузите хотя бы одно изображение — я запомню путь.")
+	}
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(items)+1)
+	for i, it := range items {
+		label := b.pathHint(it.Product, it.Color, it.Section)
+		label = strings.TrimPrefix(label, "📁 Путь: ")
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(trimButtonLabel(label), fmt.Sprintf("recent|use|%d", i)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x")))
+	msg := tgbotapi.NewMessage(chatID, "🕘 Последние папки (выберите, и я продолжу):")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	return b.sendWithRetry(msg)
 }
 
 func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, product, color, section, uploadLevel string) error {
@@ -447,10 +471,28 @@ func (b *Bot) flushAlbum(key string) {
 		state.PendingAlbumKey = ""
 		b.setSession(buf.ChatID, state)
 	}
-	_ = b.sendWithKeyboard(buf.ChatID, result+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
+	// Remember successful path for quick reuse.
+	if success > 0 {
+		b.recent.Push(buf.ChatID, RecentPath{
+			Product: product,
+			Color:   color,
+			Section: section,
+			Level:   level,
+		})
+	}
+	state = b.getSession(buf.ChatID)
+	if state != nil {
+		state.Awaiting = "photo"
+		b.setSession(buf.ChatID, state)
+	}
+	_ = b.sendWithKeyboard(buf.ChatID, result+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", "", nil, "", "section", 0, 0,
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
+			tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|go"),
 			tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🕘 Последние", "recent|open|x"),
+			tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
 		),
 	)
 }

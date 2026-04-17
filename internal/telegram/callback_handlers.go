@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"PicFolderBot/internal/service"
 )
 
 func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
@@ -101,11 +103,6 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		if len(parts) != 3 {
 			return nil
 		}
-		if parts[1] == "same" && parts[2] == "yes" {
-			state.Awaiting = "photo"
-			b.setSession(chatID, state)
-			return b.send(chatID, "📸 Отправьте следующее изображение в этот же раздел.")
-		}
 		if parts[1] == "change" && parts[2] == "path" {
 			state.Section, state.Color = "", ""
 			state.UploadLevel = ""
@@ -115,6 +112,58 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			return b.askProduct(chatID)
 		}
 		return nil
+	case "recent":
+		// recent|open|x OR recent|use|<idx>
+		if len(parts) != 3 {
+			return nil
+		}
+		if parts[1] == "open" {
+			return b.sendRecentMenu(chatID)
+		}
+		if parts[1] == "use" {
+			idx, err := parsePositiveInt(parts[2])
+			if err != nil {
+				return nil
+			}
+			items := b.recent.List(chatID)
+			if idx < 0 || idx >= len(items) {
+				return nil
+			}
+			it := items[idx]
+			// Apply as progressive full path input for safe fallback.
+			text := strings.TrimSpace(it.Product + ", " + it.Color + ", " + it.Section)
+			state.UploadLevel = strings.TrimSpace(it.Level)
+			if state.UploadLevel == "" {
+				state.UploadLevel = service.LevelSection
+			}
+			b.setSession(chatID, state)
+			_, _ = b.tryApplyFullPathInput(chatID, state, text)
+			return nil
+		}
+		return nil
+	case "refresh":
+		if len(parts) != 3 {
+			return nil
+		}
+		switch parts[1] {
+		case "product":
+			b.flow.InvalidateProducts()
+			return b.askProduct(chatID, msgID)
+		case "color":
+			b.flow.InvalidateColors(state.Product)
+			return b.askColor(chatID, state.Product, msgID)
+		case "section":
+			b.flow.InvalidateSections(state.Product, state.Color)
+			return b.askSection(chatID, state.Product, state.Color, msgID)
+		default:
+			return nil
+		}
+	case "home":
+		if len(parts) != 3 || parts[1] != "go" {
+			return nil
+		}
+		b.clearSession(chatID)
+		return b.sendOrEditText(chatID, b.welcomeText(), msgID)
 	case "save":
 		if len(parts) != 3 || parts[2] != "here" {
 			return nil

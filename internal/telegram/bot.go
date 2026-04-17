@@ -30,6 +30,9 @@ type flowAPI interface {
 	ListProducts() ([]string, error)
 	ListColors(product string) ([]string, error)
 	ListSections(product, color string) ([]string, error)
+	InvalidateProducts()
+	InvalidateColors(product string)
+	InvalidateSections(product, color string)
 	UploadImage(payload service.UploadPayload) (string, error)
 	UploadImageAtLevel(level string, payload service.UploadPayload) (string, error)
 	CreateFolderAtLevel(level, product, color, section, newFolder string) (string, error)
@@ -66,6 +69,7 @@ type Bot struct {
 	prefetchMu   sync.Mutex
 	prefetchLast map[string]time.Time
 	uploader     *uploader
+	recent       RecentStore
 }
 
 type albumItem struct {
@@ -94,6 +98,7 @@ func NewBot(token string, flow flowAPI, sessionStore SessionStore, albumStore Al
 	_, _ = api.Request(tgbotapi.NewSetMyCommands(
 		tgbotapi.BotCommand{Command: "upload", Description: "Начать пошаговую загрузку"},
 		tgbotapi.BotCommand{Command: "search", Description: "Быстрый поиск товаров/цветов"},
+		tgbotapi.BotCommand{Command: "recent", Description: "Последние папки для загрузки"},
 		tgbotapi.BotCommand{Command: "help", Description: "Показать справку"},
 		tgbotapi.BotCommand{Command: "cancel", Description: "Отменить текущее действие"},
 	))
@@ -106,6 +111,7 @@ func NewBot(token string, flow flowAPI, sessionStore SessionStore, albumStore Al
 		albums:       make(map[string]*albumBuffer),
 		prefetchLast: make(map[string]time.Time),
 		uploader:     newUploader(flow, uploadWorkers, 256),
+		recent:       NewMemoryRecentStore(8),
 	}, nil
 }
 

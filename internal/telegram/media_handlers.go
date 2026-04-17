@@ -178,12 +178,24 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 			_ = b.send(chatID, "❌ Ошибка загрузки в Яндекс.Диск:\n"+humanError(res.Err))
 			return
 		}
-		s.Awaiting = "post_upload_choice"
+		// Remember successful path for quick reuse.
+		b.recent.Push(chatID, RecentPath{
+			Product: payload.Product,
+			Color:   payload.Color,
+			Section: payload.Section,
+			Level:   level,
+		})
+		// Sticky mode: keep the chosen path and wait for new files.
+		s.Awaiting = "photo"
 		b.setSession(chatID, s)
-		_ = b.sendWithKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+res.Target+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
+		_ = b.sendWithKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+res.Target+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", "", nil, "", "section", 0, 0,
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
+				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|go"),
 				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🕘 Последние", "recent|open|x"),
+				tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
 			),
 		)
 	}()

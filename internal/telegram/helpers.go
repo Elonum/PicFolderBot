@@ -70,6 +70,57 @@ func humanError(err error) string {
 	if text == "" {
 		return "неизвестная ошибка"
 	}
+
+	low := strings.ToLower(text)
+
+	// Friendly messages for service-layer validation errors.
+	switch {
+	case strings.Contains(low, "product is required for color level"):
+		return "сначала выберите товар — затем можно создавать папку цвета"
+	case strings.Contains(low, "product and color are required for section level"):
+		return "сначала выберите товар и цвет — затем можно создавать раздел"
+	case strings.Contains(low, "product is required"):
+		return "сначала выберите товар"
+	case strings.Contains(low, "color is required"):
+		return "сначала выберите цвет"
+	case strings.Contains(low, "section is required"):
+		return "сначала выберите раздел"
+	case strings.Contains(low, "new folder name is required"):
+		return "введите название новой папки"
+	case strings.Contains(low, "product is empty"):
+		return "не указан товар"
+	case strings.Contains(low, "product or color is empty"):
+		return "не указан товар или цвет"
+	case strings.Contains(low, "unknown level"):
+		return "неизвестный уровень папки (ошибка логики бота)"
+	case strings.Contains(low, "product folder not found"):
+		return "папка товара не найдена (возможно, она была переименована)"
+	case strings.Contains(low, "color folder not found"):
+		return "папка цвета не найдена (возможно, она была переименована)"
+	case strings.Contains(low, "section folder not found"):
+		return "папка раздела не найдена (возможно, она была переименована)"
+	}
+
+	// Telegram download constraints
+	switch {
+	case strings.Contains(low, "file is too large"):
+		return "файл слишком большой"
+	case strings.Contains(low, "file is empty"):
+		return "файл пустой"
+	}
+
+	// Yandex errors
+	switch {
+	case strings.Contains(low, "yandex api unauthorized"):
+		return "нет доступа к Яндекс.Диску: проверьте токен (YANDEX_OAUTH_TOKEN)"
+	case strings.Contains(low, "yandex path not found"):
+		return "путь на Яндекс.Диске не найден (возможно, папка была переименована)"
+	case strings.Contains(low, "yandex request timeout"):
+		return "Яндекс.Диск долго отвечает — попробуйте ещё раз"
+	case strings.Contains(low, "yandex list error"):
+		return "не удалось получить список папок Яндекс.Диска — проверьте соединение"
+	}
+
 	return text
 }
 
