@@ -9,11 +9,14 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
+	"PicFolderBot/internal/observability"
 )
 
 func extractEditID(values ...int) int {
@@ -121,17 +124,43 @@ func filterOptions(values []string, enabled bool, query string) []string {
 	if !enabled {
 		return values
 	}
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
+	query = strings.TrimSpace(query)
+	nq := normalizeLookup(query)
+	if nq == "" {
 		return values
 	}
-	out := make([]string, 0, len(values))
+	type scored struct {
+		value string
+		score float64
+	}
+	out := make([]scored, 0, len(values))
 	for _, v := range values {
-		if strings.Contains(strings.ToLower(v), query) {
-			out = append(out, v)
+		nv := normalizeLookup(v)
+		if nv == "" {
+			continue
+		}
+		score := fuzzyScore(nv, nq)
+		if strings.Contains(nv, nq) {
+			// Strong signal for search queries.
+			if score < 0.92 {
+				score = 0.92
+			}
+		}
+		if score >= 0.45 {
+			out = append(out, scored{value: v, score: score})
 		}
 	}
-	return out
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].score == out[j].score {
+			return strings.ToLower(out[i].value) < strings.ToLower(out[j].value)
+		}
+		return out[i].score > out[j].score
+	})
+	flat := make([]string, 0, len(out))
+	for _, s := range out {
+		flat = append(flat, s.value)
+	}
+	return flat
 }
 
 func trimButtonLabel(v string) string {
@@ -185,6 +214,7 @@ func buildFileName(base string, mimeType string) string {
 }
 
 func (b *Bot) sendWithRetry(chattable tgbotapi.Chattable) error {
+	observability.TelegramSend()
 	var lastErr error
 	for attempt := 0; attempt < telegramSendRetries; attempt++ {
 		_, err := b.api.Send(chattable)
@@ -195,6 +225,9 @@ func (b *Bot) sendWithRetry(chattable tgbotapi.Chattable) error {
 			return nil
 		}
 		lastErr = err
+		if attempt > 0 {
+			observability.TelegramRetry()
+		}
 		log.Printf("telegram send retryable=%v attempt=%d err=%v", isTransientTelegramError(err), attempt+1, err)
 		if !isTransientTelegramError(err) || attempt == telegramSendRetries-1 {
 			return err

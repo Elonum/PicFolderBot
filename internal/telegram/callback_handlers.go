@@ -67,6 +67,36 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			return b.send(chatID, "🔎 Введите часть названия цвета для поиска:")
 		}
 		return nil
+	case "show":
+		if len(parts) != 3 || parts[2] != "list" {
+			return nil
+		}
+		switch parts[1] {
+		case "product":
+			state.Awaiting = "product"
+			b.setSession(chatID, state)
+			return b.askProduct(chatID, msgID)
+		case "color":
+			if strings.TrimSpace(state.Product) == "" {
+				state.Awaiting = "product"
+				b.setSession(chatID, state)
+				return b.askProduct(chatID, msgID)
+			}
+			state.Awaiting = "color"
+			b.setSession(chatID, state)
+			return b.askColor(chatID, state.Product, msgID)
+		case "section":
+			if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" {
+				state.Awaiting = "product"
+				b.setSession(chatID, state)
+				return b.askProduct(chatID, msgID)
+			}
+			state.Awaiting = "section"
+			b.setSession(chatID, state)
+			return b.askSection(chatID, state.Product, state.Color, msgID)
+		default:
+			return nil
+		}
 	case "post":
 		if len(parts) != 3 {
 			return nil

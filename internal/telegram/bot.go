@@ -20,6 +20,8 @@ const (
 	maxButtonLabelRunes     = 26
 	albumFlushDelay         = 1200 * time.Millisecond
 	telegramSendRetries     = 3
+	prefetchCooldown        = 12 * time.Second
+	uploadWorkers           = 3
 )
 
 type flowAPI interface {
@@ -61,6 +63,9 @@ type Bot struct {
 	albumStore   AlbumStore
 	albums       map[string]*albumBuffer
 	albumsMu     sync.Mutex
+	prefetchMu   sync.Mutex
+	prefetchLast map[string]time.Time
+	uploader     *uploader
 }
 
 type albumItem struct {
@@ -99,6 +104,8 @@ func NewBot(token string, flow flowAPI, sessionStore SessionStore, albumStore Al
 		sessionStore: sessionStore,
 		albumStore:   albumStore,
 		albums:       make(map[string]*albumBuffer),
+		prefetchLast: make(map[string]time.Time),
+		uploader:     newUploader(flow, uploadWorkers, 256),
 	}, nil
 }
 
@@ -111,6 +118,9 @@ func (b *Bot) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			b.api.StopReceivingUpdates()
+			if b.uploader != nil {
+				b.uploader.stop()
+			}
 			return nil
 		case upd := <-updates:
 			if err := b.handleUpdate(upd); err != nil {

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"PicFolderBot/internal/cache"
+	"PicFolderBot/internal/observability"
 	"PicFolderBot/internal/parser"
 )
 
@@ -81,10 +83,14 @@ func (f *Flow) RootDisplayName() string {
 }
 
 func (f *Flow) ListProducts() ([]string, error) {
+	start := time.Now()
+	defer func() { observability.ObserveListProducts(time.Since(start)) }()
 	return f.listCached(f.root)
 }
 
 func (f *Flow) ListColors(product string) ([]string, error) {
+	start := time.Now()
+	defer func() { observability.ObserveListColors(time.Since(start)) }()
 	product = normalizeToken(product)
 	if product == "" {
 		return nil, errors.New("product is empty")
@@ -100,6 +106,8 @@ func (f *Flow) ListColors(product string) ([]string, error) {
 }
 
 func (f *Flow) ListSections(product, color string) ([]string, error) {
+	start := time.Now()
+	defer func() { observability.ObserveListSections(time.Since(start)) }()
 	p := normalizeToken(product)
 	c := normalizeToken(color)
 	if p == "" || c == "" {
@@ -318,8 +326,10 @@ func (f *Flow) resolveColorFolder(parentPath, product, desiredColor string) (str
 func (f *Flow) listCached(path string) ([]string, error) {
 	if f.cache != nil {
 		if values, ok := f.cache.Get(path); ok {
+			observability.CacheHit()
 			return values, nil
 		}
+		observability.CacheMiss()
 	}
 	values, err := f.disk.ListSubdirs(path)
 	if err != nil {

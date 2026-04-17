@@ -58,3 +58,11 @@ func TestResolveTypedOptionSmartNotFoundHasClosestSuggestions(t *testing.T) {
 		t.Fatalf("expected at least one suggestion, got none")
 	}
 }
+
+func TestNormalizeLookupConfusablesCyrToLatin(t *testing.T) {
+	// Cyrillic 'р' should be treated as Latin 'p' in article codes.
+	got := normalizeLookup("F06Р03") // Р is Cyrillic
+	if got != "f06p03" {
+		t.Fatalf("unexpected normalize: %q", got)
+	}
+}

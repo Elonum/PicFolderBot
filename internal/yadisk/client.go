@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"PicFolderBot/internal/observability"
 )
 
 const baseURL = "https://cloud-api.yandex.net/v1/disk/resources"
@@ -217,11 +219,15 @@ func decodeAPIError(resp *http.Response) error {
 }
 
 func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response, error) {
+	observability.YadiskRequest()
 	var lastErr error
 	for attempt := 0; attempt < yandexRetries; attempt++ {
 		resp, err := fn()
 		if err == nil {
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+				if attempt > 0 {
+					observability.YadiskRetry()
+				}
 				log.Printf("yadisk transient status=%d attempt=%d", resp.StatusCode, attempt+1)
 				lastErr = fmt.Errorf("yandex api transient status %d", resp.StatusCode)
 				resp.Body.Close()
@@ -233,6 +239,9 @@ func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response,
 			return resp, nil
 		}
 		lastErr = err
+		if attempt > 0 {
+			observability.YadiskRetry()
+		}
 		log.Printf("yadisk request retryable=%v attempt=%d err=%v", isTransientNetErr(err), attempt+1, err)
 		if !isTransientNetErr(err) || attempt == yandexRetries-1 {
 			return nil, err

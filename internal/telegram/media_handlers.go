@@ -121,23 +121,7 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 		b.setSession(chatID, state)
 		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
 	}
-
-	target, err := b.flow.UploadImageAtLevel(level, service.UploadPayload{
-		Product: state.Product, Color: state.Color, Section: state.Section,
-		Filename: state.FileName, MimeType: state.FileMIME, Content: state.FileBytes,
-	})
-	if err != nil {
-		return b.send(chatID, "❌ Ошибка загрузки в Яндекс.Диск:\n"+humanError(err))
-	}
-	state.FileID, state.FileName, state.FileMIME, state.FileBytes = "", "", "", nil
-	state.Awaiting = "post_upload_choice"
-	b.setSession(chatID, state)
-	return b.sendWithKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+target+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, extractEditID(editMessageID...),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
-			tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
-		),
-	)
+	return b.enqueueSingleUpload(chatID, level, state, extractEditID(editMessageID...))
 }
 
 func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string, string, string) {
@@ -158,4 +142,50 @@ func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string
 		section = strings.TrimSpace(parsed.Section)
 	}
 	return product, color, section, level
+}
+
+func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionState, editMessageID int) error {
+	if b.uploader == nil {
+		return b.send(chatID, "❌ Ошибка: uploader не инициализирован.")
+	}
+	payload := service.UploadPayload{
+		Product:  state.Product,
+		Color:    state.Color,
+		Section:  state.Section,
+		Filename: state.FileName,
+		MimeType: state.FileMIME,
+		Content:  state.FileBytes,
+	}
+	// Clear file bytes immediately to keep session small and UI responsive.
+	state.FileID, state.FileName, state.FileMIME, state.FileBytes = "", "", "", nil
+	state.Awaiting = "uploading"
+	b.setSession(chatID, state)
+
+	if err := b.sendOrEditText(chatID, "⏳ Загружаю в Яндекс.Диск…", editMessageID); err != nil {
+		return err
+	}
+
+	done := b.uploader.submit(level, payload)
+	go func() {
+		res := <-done
+		s := b.getSession(chatID)
+		if s == nil {
+			s = &sessionState{}
+		}
+		if res.Err != nil {
+			s.Awaiting = "photo"
+			b.setSession(chatID, s)
+			_ = b.send(chatID, "❌ Ошибка загрузки в Яндекс.Диск:\n"+humanError(res.Err))
+			return
+		}
+		s.Awaiting = "post_upload_choice"
+		b.setSession(chatID, s)
+		_ = b.sendWithKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+res.Target+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),
+				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+			),
+		)
+	}()
+	return nil
 }

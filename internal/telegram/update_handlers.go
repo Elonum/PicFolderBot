@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -86,10 +85,32 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		return err
 	}
 	if state != nil && state.Awaiting == "search_product_query" && msg.Text != "" {
+		// Allow full-path input even inside /search query.
+		if ok, err := b.tryApplyFullPathInput(chatID, state, msg.Text); ok || err != nil {
+			return err
+		}
+		query := strings.TrimSpace(msg.Text)
+		products, err := b.flow.ListProducts()
+		if err != nil {
+			return b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
+		}
+		res := resolveTypedOptionSmart(products, query)
+		if res.Value != "" {
+			state.Product, state.Color, state.Section = res.Value, "", ""
+			state.SearchField, state.SearchQuery = "", ""
+			state.PageColor, state.PageSection = 0, 0
+			state.Awaiting = "color"
+			b.setSession(chatID, state)
+			go b.prefetchColors(res.Value)
+			return b.askColor(chatID, res.Value)
+		}
 		state.SearchField = "product"
-		state.SearchQuery = strings.TrimSpace(msg.Text)
+		state.SearchQuery = query
 		state.PageProduct = 0
 		b.setSession(chatID, state)
+		if len(res.Suggestions) > 0 {
+			return b.sendResolveHint(chatID, "product", res, "🔎 Не нашел точное совпадение. Возможно, вы имели в виду:")
+		}
 		return b.askProduct(chatID)
 	}
 	if state != nil && state.Awaiting == "search_color_query" && msg.Text != "" {
@@ -97,10 +118,32 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 			state.Awaiting = "product"
 			return b.send(chatID, "⚠️ Сначала выберите товар, затем выполните поиск по цветам.")
 		}
+		// Allow full-path input even inside /search query.
+		if ok, err := b.tryApplyFullPathInput(chatID, state, msg.Text); ok || err != nil {
+			return err
+		}
+		query := strings.TrimSpace(msg.Text)
+		colors, err := b.flow.ListColors(state.Product)
+		if err != nil {
+			return b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
+		}
+		res := resolveTypedOptionSmart(colors, query)
+		if res.Value != "" {
+			state.Color, state.Section = res.Value, ""
+			state.SearchField, state.SearchQuery = "", ""
+			state.PageSection = 0
+			state.Awaiting = "section"
+			b.setSession(chatID, state)
+			go b.prefetchSections(state.Product, res.Value)
+			return b.askSection(chatID, state.Product, res.Value)
+		}
 		state.SearchField = "color"
-		state.SearchQuery = strings.TrimSpace(msg.Text)
+		state.SearchQuery = query
 		state.PageColor = 0
 		b.setSession(chatID, state)
+		if len(res.Suggestions) > 0 {
+			return b.sendResolveHint(chatID, "color", res, "🔎 Не нашел точное совпадение. Возможно, вы имели в виду:")
+		}
 		return b.askColor(chatID, state.Product)
 	}
 	if state != nil && msg.Text != "" {
@@ -149,6 +192,8 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		}
 		state.Product, state.Color, state.Section = res.Value, "", ""
 		state.PageColor, state.PageSection = 0, 0
+		b.setSession(chatID, state)
+		go b.prefetchColors(res.Value)
 		return true, b.continueUploadFlow(chatID, state)
 	case "color":
 		if strings.TrimSpace(state.Product) == "" {
@@ -164,6 +209,8 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		}
 		state.Color, state.Section = res.Value, ""
 		state.PageSection = 0
+		b.setSession(chatID, state)
+		go b.prefetchSections(state.Product, res.Value)
 		return true, b.continueUploadFlow(chatID, state)
 	case "section":
 		if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" {
@@ -178,6 +225,7 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 			return true, b.sendResolveHint(chatID, "section", res, "⚠️ Не удалось однозначно определить папку раздела.")
 		}
 		state.Section = res.Value
+		b.setSession(chatID, state)
 		return true, b.continueUploadFlow(chatID, state)
 	default:
 		return false, nil
@@ -264,158 +312,25 @@ func splitBySeparators(input string) []string {
 	return out
 }
 
-func resolveTypedOption(options []string, input string) string {
-	return resolveTypedOptionSmart(options, input).Value
-}
-
-type optionResolution struct {
-	Value       string
-	Suggestions []string
-}
-
-type optionScore struct {
-	value string
-	score float64
-}
-
-func resolveTypedOptionSmart(options []string, input string) optionResolution {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return optionResolution{}
-	}
-	normInput := normalizeLookup(input)
-	if normInput == "" {
-		return optionResolution{}
-	}
-
-	// 1) Strict match only.
-	for _, opt := range options {
-		if strings.EqualFold(strings.TrimSpace(opt), input) || normalizeLookup(opt) == normInput {
-			return optionResolution{Value: opt}
-		}
-	}
-
-	// 2) Safe fuzzy match with deterministic ranking.
-	matches := make([]optionScore, 0, len(options))
-	suggestions := make([]optionScore, 0, len(options))
-	for _, opt := range options {
-		normOpt := normalizeLookup(opt)
-		score := fuzzyScore(normOpt, normInput)
-		if score >= 0.45 {
-			suggestions = append(suggestions, optionScore{value: opt, score: score})
-		}
-		if score >= 0.72 {
-			matches = append(matches, optionScore{value: opt, score: score})
-		}
-	}
-	if len(matches) == 0 {
-		return optionResolution{Suggestions: topSuggestions(suggestions, 3)}
-	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
-	best := matches[0]
-	// Protect user from accidental wrong navigation:
-	// if two options are too close in score, we ask user to choose manually.
-	if len(matches) > 1 && best.score-matches[1].score < 0.08 {
-		return optionResolution{Suggestions: topSuggestions(matches, 3)}
-	}
-	return optionResolution{Value: best.value}
-}
-
-func normalizeLookup(v string) string {
-	v = strings.ToLower(strings.TrimSpace(v))
-	v = strings.ReplaceAll(v, "ё", "е")
-	v = strings.ReplaceAll(v, "-", " ")
-	v = strings.ReplaceAll(v, "_", " ")
-	return strings.Join(strings.Fields(v), " ")
-}
-
-func fuzzyScore(option, input string) float64 {
-	if option == "" || input == "" {
-		return 0
-	}
-	if option == input {
-		return 1
-	}
-
-	// Prefix match is useful for short article-style names.
-	prefix := 0.0
-	if strings.HasPrefix(option, input) || strings.HasPrefix(input, option) {
-		// Penalize large length mismatch (prevents F05P02 -> F05P0200 mistakes).
-		diff := absInt(len(option) - len(input))
-		prefix = 0.9 - float64(diff)*0.06
-		if prefix < 0 {
-			prefix = 0
-		}
-	}
-
-	// Token overlap score.
-	optionTokens := strings.Fields(option)
-	inputTokens := strings.Fields(input)
-	overlap := tokenOverlap(optionTokens, inputTokens)
-
-	if overlap > prefix {
-		return overlap
-	}
-	return prefix
-}
-
-func tokenOverlap(a, b []string) float64 {
-	if len(a) == 0 || len(b) == 0 {
-		return 0
-	}
-	setA := make(map[string]struct{}, len(a))
-	for _, v := range a {
-		setA[v] = struct{}{}
-	}
-	common := 0
-	for _, v := range b {
-		if _, ok := setA[v]; ok {
-			common++
-		}
-	}
-	if common == 0 {
-		return 0
-	}
-	denominator := len(a)
-	if len(b) > denominator {
-		denominator = len(b)
-	}
-	return float64(common) / float64(denominator)
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
-func topSuggestions(values []optionScore, limit int) []string {
-	if len(values) == 0 || limit <= 0 {
-		return nil
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i].score > values[j].score })
-	seen := make(map[string]struct{}, limit)
-	out := make([]string, 0, limit)
-	for _, v := range values {
-		if _, ok := seen[v.value]; ok {
-			continue
-		}
-		seen[v.value] = struct{}{}
-		out = append(out, v.value)
-		if len(out) == limit {
-			break
-		}
-	}
-	return out
-}
-
 func (b *Bot) sendResolveHint(chatID int64, field string, res optionResolution, baseText string) error {
 	if len(res.Suggestions) == 0 {
 		return b.send(chatID, baseText+"\nВведите точнее или выберите кнопку из списка.")
 	}
 	text := baseText + "\nВарианты ниже помогут выбрать быстрее."
-	return b.sendWithKeyboard(chatID, text, field, res.Suggestions, "", field, 0, 0)
+	backStep := ""
+	switch field {
+	case "product":
+		backStep = "product"
+	case "color":
+		backStep = "color"
+	case "section":
+		backStep = "section"
+	}
+	extra := [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить запрос", fmt.Sprintf("search|%s|start", field))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📋 Показать список", fmt.Sprintf("show|%s|list", field))),
+	}
+	return b.sendWithKeyboard(chatID, text, field, res.Suggestions, "", backStep, 0, 0, extra...)
 }
 
 func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, product, color, section, uploadLevel string) error {
@@ -500,16 +415,26 @@ func (b *Bot) flushAlbum(key string) {
 	product, color, section := strings.TrimSpace(buf.Product), strings.TrimSpace(buf.Color), strings.TrimSpace(buf.Section)
 	success, fail := 0, 0
 	savedFolder := ""
+	results := make([]<-chan uploadResult, 0, len(buf.Items))
 	for _, it := range buf.Items {
-		target, err := b.flow.UploadImageAtLevel(level, service.UploadPayload{
-			Product: product, Color: color, Section: section, Filename: it.Filename, MimeType: it.MimeType, Content: it.Content,
-		})
-		if err != nil {
+		payload := service.UploadPayload{
+			Product:  product,
+			Color:    color,
+			Section:  section,
+			Filename: it.Filename,
+			MimeType: it.MimeType,
+			Content:  it.Content,
+		}
+		results = append(results, b.uploader.submit(level, payload))
+	}
+	for _, ch := range results {
+		res := <-ch
+		if res.Err != nil {
 			fail++
 			continue
 		}
 		if savedFolder == "" {
-			savedFolder = folderFromTarget(target)
+			savedFolder = folderFromTarget(res.Target)
 		}
 		success++
 	}
