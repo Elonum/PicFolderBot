@@ -67,12 +67,14 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		}
 		err = b.refreshLevel(chatID, state)
 		state.AddLevel = ""
+		b.setSession(chatID, state)
 		return err
 	}
 	if state != nil && state.Awaiting == "search_product_query" && msg.Text != "" {
 		state.SearchField = "product"
 		state.SearchQuery = strings.TrimSpace(msg.Text)
 		state.PageProduct = 0
+		b.setSession(chatID, state)
 		return b.askProduct(chatID)
 	}
 	if state != nil && state.Awaiting == "search_color_query" && msg.Text != "" {
@@ -83,6 +85,7 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		state.SearchField = "color"
 		state.SearchQuery = strings.TrimSpace(msg.Text)
 		state.PageColor = 0
+		b.setSession(chatID, state)
 		return b.askColor(chatID, state.Product)
 	}
 	if state != nil && msg.Text != "" {
@@ -233,12 +236,27 @@ func resolveTypedOption(options []string, input string) string {
 	if input == "" {
 		return ""
 	}
+	normInput := normalizeLookup(input)
 	for _, opt := range options {
 		if strings.EqualFold(strings.TrimSpace(opt), input) {
 			return opt
 		}
+		if normalizeLookup(opt) == normInput {
+			return opt
+		}
+		if strings.Contains(normalizeLookup(opt), normInput) || strings.Contains(normInput, normalizeLookup(opt)) {
+			return opt
+		}
 	}
 	return ""
+}
+
+func normalizeLookup(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	v = strings.ReplaceAll(v, "ё", "е")
+	v = strings.ReplaceAll(v, "-", " ")
+	v = strings.ReplaceAll(v, "_", " ")
+	return strings.Join(strings.Fields(v), " ")
 }
 
 func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, product, color, section, uploadLevel string) error {
@@ -277,6 +295,8 @@ func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, pro
 		b.setSession(chatID, state)
 	}
 	state.PendingAlbumKey = key
+	b.setSession(chatID, state)
+	b.albumStore.Set(key, buf)
 	if needNotify {
 		return b.send(chatID, "📦 Получено несколько файлов. Загружаю одним пакетом...")
 	}
@@ -286,6 +306,9 @@ func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, pro
 func (b *Bot) flushAlbum(key string) {
 	b.albumsMu.Lock()
 	buf := b.albums[key]
+	if buf == nil {
+		buf = b.albumStore.Get(key)
+	}
 	if buf == nil {
 		b.albumsMu.Unlock()
 		return
@@ -303,10 +326,13 @@ func (b *Bot) flushAlbum(key string) {
 			b.setSession(buf.ChatID, state)
 		}
 		state.PendingAlbumKey = key
+		b.setSession(buf.ChatID, state)
+		b.albumStore.Set(key, buf)
 		_ = b.send(buf.ChatID, "⚠️ Для пакетной загрузки выберите путь, и я автоматически загружу уже отправленные файлы.")
 		return
 	}
 	delete(b.albums, key)
+	b.albumStore.Delete(key)
 	b.albumsMu.Unlock()
 
 	product, color, section := strings.TrimSpace(buf.Product), strings.TrimSpace(buf.Color), strings.TrimSpace(buf.Section)
@@ -332,6 +358,7 @@ func (b *Bot) flushAlbum(key string) {
 	state := b.getSession(buf.ChatID)
 	if state != nil && state.PendingAlbumKey == key {
 		state.PendingAlbumKey = ""
+		b.setSession(buf.ChatID, state)
 	}
 	_ = b.sendWithKeyboard(buf.ChatID, result+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, 0,
 		tgbotapi.NewInlineKeyboardRow(
@@ -349,8 +376,12 @@ func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (boo
 	b.albumsMu.Lock()
 	buf := b.albums[key]
 	if buf == nil {
+		buf = b.albumStore.Get(key)
+	}
+	if buf == nil {
 		b.albumsMu.Unlock()
 		state.PendingAlbumKey = ""
+		b.setSession(chatID, state)
 		return false, nil
 	}
 	b.fillAlbumPathFromSession(buf)

@@ -6,6 +6,7 @@ import (
 	"path"
 	"strings"
 
+	"PicFolderBot/internal/cache"
 	"PicFolderBot/internal/parser"
 )
 
@@ -36,14 +37,27 @@ type Flow struct {
 	disk       DiskAPI
 	root       string
 	parseInput CaptionParser
+	cache      cache.TreeCache
 }
 
-func NewFlow(disk DiskAPI, root string, parseInput CaptionParser) *Flow {
-	return &Flow{
+type Option func(*Flow)
+
+func WithTreeCache(tree cache.TreeCache) Option {
+	return func(f *Flow) {
+		f.cache = tree
+	}
+}
+
+func NewFlow(disk DiskAPI, root string, parseInput CaptionParser, opts ...Option) *Flow {
+	flow := &Flow{
 		disk:       disk,
 		root:       strings.TrimSuffix(strings.TrimSpace(root), "/"),
 		parseInput: parseInput,
 	}
+	for _, opt := range opts {
+		opt(flow)
+	}
+	return flow
 }
 
 func (f *Flow) ParseCaption(caption string) parser.ParsedInput {
@@ -67,7 +81,7 @@ func (f *Flow) RootDisplayName() string {
 }
 
 func (f *Flow) ListProducts() ([]string, error) {
-	return f.disk.ListSubdirs(f.root)
+	return f.listCached(f.root)
 }
 
 func (f *Flow) ListColors(product string) ([]string, error) {
@@ -82,7 +96,7 @@ func (f *Flow) ListColors(product string) ([]string, error) {
 	if resolved != "" {
 		product = resolved
 	}
-	return f.disk.ListSubdirs(joinDisk(f.root, product))
+	return f.listCached(joinDisk(f.root, product))
 }
 
 func (f *Flow) ListSections(product, color string) ([]string, error) {
@@ -105,7 +119,7 @@ func (f *Flow) ListSections(product, color string) ([]string, error) {
 	} else {
 		c = BuildColorFolder(p, c)
 	}
-	return f.disk.ListSubdirs(joinDisk(f.root, p, c))
+	return f.listCached(joinDisk(f.root, p, c))
 }
 
 func (f *Flow) UploadImage(payload UploadPayload) (string, error) {
@@ -257,12 +271,12 @@ func normalizeToken(v string) string {
 }
 
 func (f *Flow) resolveExistingName(parentPath, desired string) (string, error) {
-	desired = normalizeToken(desired)
+	desired = canonicalSectionName(normalizeToken(desired))
 	if desired == "" {
 		return "", nil
 	}
 
-	items, err := f.disk.ListSubdirs(parentPath)
+	items, err := f.listCached(parentPath)
 	if err != nil {
 		return "", err
 	}
@@ -271,7 +285,7 @@ func (f *Flow) resolveExistingName(parentPath, desired string) (string, error) {
 			return name, nil
 		}
 	}
-	return "", nil
+	return bestMatch(items, desired), nil
 }
 
 func (f *Flow) resolveColorFolder(parentPath, product, desiredColor string) (string, error) {
@@ -280,7 +294,7 @@ func (f *Flow) resolveColorFolder(parentPath, product, desiredColor string) (str
 		return "", nil
 	}
 
-	items, err := f.disk.ListSubdirs(parentPath)
+	items, err := f.listCached(parentPath)
 	if err != nil {
 		return "", err
 	}
@@ -299,6 +313,22 @@ func (f *Flow) resolveColorFolder(parentPath, product, desiredColor string) (str
 	}
 
 	return "", nil
+}
+
+func (f *Flow) listCached(path string) ([]string, error) {
+	if f.cache != nil {
+		if values, ok := f.cache.Get(path); ok {
+			return values, nil
+		}
+	}
+	values, err := f.disk.ListSubdirs(path)
+	if err != nil {
+		return nil, err
+	}
+	if f.cache != nil {
+		f.cache.Set(path, values)
+	}
+	return values, nil
 }
 
 func joinDisk(parts ...string) string {

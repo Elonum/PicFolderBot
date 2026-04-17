@@ -7,11 +7,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"PicFolderBot/internal/cache"
 	"PicFolderBot/internal/config"
 	"PicFolderBot/internal/parser"
 	"PicFolderBot/internal/service"
 	"PicFolderBot/internal/telegram"
 	"PicFolderBot/internal/yadisk"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -21,9 +24,28 @@ func main() {
 	}
 
 	diskClient := yadisk.NewClient(cfg.YandexToken, cfg.YandexTimeout)
-	flow := service.NewFlow(diskClient, cfg.YandexRootPath, parser.ParseCaption)
+	var (
+		treeCache    cache.TreeCache
+		sessionStore telegram.SessionStore
+		albumStore   telegram.AlbumStore
+	)
+	if cfg.RedisAddr != "" {
+		redisClient := redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		})
+		treeCache = cache.NewRedisTreeCache(redisClient, cfg.CacheTTL)
+		sessionStore = telegram.NewRedisSessionStore(redisClient, cfg.StateTTL)
+		albumStore = telegram.NewRedisAlbumStore(redisClient, cfg.StateTTL)
+	} else {
+		treeCache = cache.NewMemoryTreeCache(cfg.CacheTTL)
+		sessionStore = telegram.NewMemorySessionStore(cfg.StateTTL)
+		albumStore = telegram.NewMemoryAlbumStore(cfg.StateTTL)
+	}
+	flow := service.NewFlow(diskClient, cfg.YandexRootPath, parser.ParseCaption, service.WithTreeCache(treeCache))
 
-	bot, err := telegram.NewBot(cfg.TelegramToken, flow)
+	bot, err := telegram.NewBot(cfg.TelegramToken, flow, sessionStore, albumStore)
 	if err != nil {
 		log.Fatalf("telegram init error: %v", err)
 	}

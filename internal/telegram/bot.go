@@ -54,13 +54,13 @@ type sessionState struct {
 }
 
 type Bot struct {
-	api      *tgbotapi.BotAPI
-	flow     flowAPI
-	rootName string
-	sessions map[int64]*sessionState
-	albums   map[string]*albumBuffer
-	mu       sync.RWMutex
-	albumsMu sync.Mutex
+	api          *tgbotapi.BotAPI
+	flow         flowAPI
+	rootName     string
+	sessionStore SessionStore
+	albumStore   AlbumStore
+	albums       map[string]*albumBuffer
+	albumsMu     sync.Mutex
 }
 
 type albumItem struct {
@@ -81,7 +81,7 @@ type albumBuffer struct {
 	Notified     bool
 }
 
-func NewBot(token string, flow flowAPI) (*Bot, error) {
+func NewBot(token string, flow flowAPI, sessionStore SessionStore, albumStore AlbumStore) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(strings.TrimSpace(token))
 	if err != nil {
 		return nil, err
@@ -93,11 +93,12 @@ func NewBot(token string, flow flowAPI) (*Bot, error) {
 		tgbotapi.BotCommand{Command: "cancel", Description: "Отменить текущее действие"},
 	))
 	return &Bot{
-		api:      api,
-		flow:     flow,
-		rootName: flow.RootDisplayName(),
-		sessions: make(map[int64]*sessionState),
-		albums:   make(map[string]*albumBuffer),
+		api:          api,
+		flow:         flow,
+		rootName:     flow.RootDisplayName(),
+		sessionStore: sessionStore,
+		albumStore:   albumStore,
+		albums:       make(map[string]*albumBuffer),
 	}, nil
 }
 

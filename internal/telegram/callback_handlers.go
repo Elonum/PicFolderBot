@@ -27,6 +27,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			return nil
 		}
 		b.applySetSelection(state, parts[1], parts[2])
+		b.setSession(chatID, state)
 	case "pick":
 		if len(parts) != 3 || parts[2] != "set" {
 			return nil
@@ -37,11 +38,13 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			return nil
 		}
 		b.applySetSelection(state, chunks[0], chunks[1])
+		b.setSession(chatID, state)
 	case "add":
 		if len(parts) != 3 || parts[2] != "new" {
 			return nil
 		}
 		state.AddLevel, state.Awaiting = parts[1], "new_folder_name"
+		b.setSession(chatID, state)
 		return b.sendWithKeyboard(chatID, "📁 Введите название новой папки:", "", nil, "", "", 0, msgID,
 			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", fmt.Sprintf("back|%s|stay", parts[1]))),
 		)
@@ -51,6 +54,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		}
 		if parts[1] == "product" {
 			state.Awaiting = "search_product_query"
+			b.setSession(chatID, state)
 			return b.send(chatID, "🔎 Введите часть названия товара для поиска:")
 		}
 		if parts[1] == "color" {
@@ -59,6 +63,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 				return b.send(chatID, "⚠️ Сначала выберите товар, затем выполните поиск по цветам.")
 			}
 			state.Awaiting = "search_color_query"
+			b.setSession(chatID, state)
 			return b.send(chatID, "🔎 Введите часть названия цвета для поиска:")
 		}
 		return nil
@@ -68,6 +73,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		}
 		if parts[1] == "same" && parts[2] == "yes" {
 			state.Awaiting = "photo"
+			b.setSession(chatID, state)
 			return b.send(chatID, "📸 Отправьте следующее изображение в этот же раздел.")
 		}
 		if parts[1] == "change" && parts[2] == "path" {
@@ -75,6 +81,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			state.UploadLevel = ""
 			state.PageColor, state.PageSection = 0, 0
 			state.Awaiting = "product"
+			b.setSession(chatID, state)
 			return b.askProduct(chatID)
 		}
 		return nil
@@ -103,6 +110,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			return nil
 		}
 		state.Awaiting = "photo"
+		b.setSession(chatID, state)
 		return b.sendOrEditText(chatID, "📥 Отправьте фото — сохраню в текущую папку.", msgID)
 	case "nav":
 		if len(parts) != 4 {

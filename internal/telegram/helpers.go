@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -23,21 +24,15 @@ func extractEditID(values ...int) int {
 }
 
 func (b *Bot) getSession(chatID int64) *sessionState {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.sessions[chatID]
+	return b.sessionStore.Get(chatID)
 }
 
 func (b *Bot) setSession(chatID int64, state *sessionState) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.sessions[chatID] = state
+	b.sessionStore.Set(chatID, state)
 }
 
 func (b *Bot) clearSession(chatID int64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.sessions, chatID)
+	b.sessionStore.Delete(chatID)
 }
 
 func downloadFile(url string) ([]byte, string, error) {
@@ -197,6 +192,7 @@ func (b *Bot) sendWithRetry(chattable tgbotapi.Chattable) error {
 			return nil
 		}
 		lastErr = err
+		log.Printf("telegram send retryable=%v attempt=%d err=%v", isTransientTelegramError(err), attempt+1, err)
 		if !isTransientTelegramError(err) || attempt == telegramSendRetries-1 {
 			return err
 		}

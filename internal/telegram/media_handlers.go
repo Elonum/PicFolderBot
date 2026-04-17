@@ -46,6 +46,7 @@ func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 		b.setSession(chatID, state)
 	} else {
 		state.FileID, state.FileName, state.FileMIME, state.FileBytes = file.FileID, fileName, mimeType, content
+		b.setSession(chatID, state)
 	}
 	return b.continueUploadFlow(chatID, state)
 }
@@ -86,6 +87,7 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) error {
 		b.setSession(chatID, state)
 	} else {
 		state.FileID, state.FileName, state.FileMIME, state.FileBytes = doc.FileID, fileName, mimeType, content
+		b.setSession(chatID, state)
 	}
 	return b.continueUploadFlow(chatID, state)
 }
@@ -98,14 +100,17 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 
 	if state.Product == "" {
 		state.Awaiting = "product"
+		b.setSession(chatID, state)
 		return b.askProduct(chatID, editMessageID...)
 	}
 	if level != service.LevelProduct && state.Color == "" {
 		state.Awaiting = "color"
+		b.setSession(chatID, state)
 		return b.askColor(chatID, state.Product, editMessageID...)
 	}
 	if level == service.LevelSection && state.Section == "" {
 		state.Awaiting = "section"
+		b.setSession(chatID, state)
 		return b.askSection(chatID, state.Product, state.Color, editMessageID...)
 	}
 	if handled, err := b.processPendingAlbumIfReady(chatID, state); handled || err != nil {
@@ -113,6 +118,7 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 	}
 	if len(state.FileBytes) == 0 {
 		state.Awaiting = "photo"
+		b.setSession(chatID, state)
 		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
 	}
 
@@ -125,6 +131,7 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 	}
 	state.FileID, state.FileName, state.FileMIME, state.FileBytes = "", "", "", nil
 	state.Awaiting = "post_upload_choice"
+	b.setSession(chatID, state)
 	return b.sendWithKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+target+"\n\n📤 Загрузить еще в этот же раздел?", "", nil, "", "section", 0, extractEditID(editMessageID...),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("✅ Да", "post|same|yes"),

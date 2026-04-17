@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -221,6 +222,7 @@ func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response,
 		resp, err := fn()
 		if err == nil {
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+				log.Printf("yadisk transient status=%d attempt=%d", resp.StatusCode, attempt+1)
 				lastErr = fmt.Errorf("yandex api transient status %d", resp.StatusCode)
 				resp.Body.Close()
 				if attempt < yandexRetries-1 {
@@ -231,6 +233,7 @@ func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response,
 			return resp, nil
 		}
 		lastErr = err
+		log.Printf("yadisk request retryable=%v attempt=%d err=%v", isTransientNetErr(err), attempt+1, err)
 		if !isTransientNetErr(err) || attempt == yandexRetries-1 {
 			return nil, err
 		}
