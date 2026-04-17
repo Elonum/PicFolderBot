@@ -12,10 +12,10 @@ import (
 func (b *Bot) askProduct(chatID int64, editMessageID ...int) error {
 	options, err := b.flow.ListProducts()
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
+		return b.send(chatID, msgListProductsError(err))
 	}
 	if len(options) == 0 {
-		return b.sendWithKeyboard(chatID, "📦 Список товаров пуст.\n"+b.pathHint("", "", "")+"\nСоздайте первую папку товара кнопкой ниже.", "product", options, service.LevelProduct, "product", 0, extractEditID(editMessageID...))
+		return b.sendWithKeyboard(chatID, msgProductsEmptyPrefix+b.pathHint("", "", "")+msgProductsEmptySuffix, "product", options, service.LevelProduct, "product", 0, extractEditID(editMessageID...))
 	}
 	state := b.getSession(chatID)
 	page := 0
@@ -23,9 +23,9 @@ func (b *Bot) askProduct(chatID int64, editMessageID ...int) error {
 		page = state.PageProduct
 		options = filterOptions(options, state.SearchField == "product", state.SearchQuery)
 	}
-	text := "📦 Выберите товар:\n" + b.pathHint("", "", "") + "\n✍️ Можно ввести название текстом или полный путь."
+	text := msgChooseProductPrefix + b.pathHint("", "", "") + msgTextInputHint
 	if state != nil && state.SearchField == "product" && strings.TrimSpace(state.SearchQuery) != "" {
-		text += "\n🔎 Поиск: " + state.SearchQuery
+		text += msgSearchAppliedPrefix + state.SearchQuery
 	}
 	return b.sendWithKeyboard(chatID, text, "product", options, service.LevelProduct, "product", page, extractEditID(editMessageID...))
 }
@@ -33,11 +33,11 @@ func (b *Bot) askProduct(chatID int64, editMessageID ...int) error {
 func (b *Bot) askColor(chatID int64, product string, editMessageID ...int) error {
 	options, err := b.flow.ListColors(product)
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
+		return b.send(chatID, msgListColorsError(err))
 	}
 	if len(options) == 0 {
-		return b.sendWithKeyboard(chatID, "🎨 Для выбранного товара пока нет папок цветов.\n"+b.pathHint(product, "", "")+"\nСоздайте первую кнопкой ниже.", "color", options, service.LevelColor, "color", 0, extractEditID(editMessageID...),
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|product|here")),
+		return b.sendWithKeyboard(chatID, msgColorsEmptyPrefix+b.pathHint(product, "", "")+msgColorsEmptySuffix, "color", options, service.LevelColor, "color", 0, extractEditID(editMessageID...),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSaveHere, "save|product|here")),
 		)
 	}
 	state := b.getSession(chatID)
@@ -46,23 +46,23 @@ func (b *Bot) askColor(chatID int64, product string, editMessageID ...int) error
 		page = state.PageColor
 		options = filterOptions(options, state.SearchField == "color", state.SearchQuery)
 	}
-	text := "🎨 Выберите цвет:\n" + b.pathHint(product, "", "") + "\n✍️ Можно ввести название текстом или полный путь."
+	text := msgChooseColorPrefix + b.pathHint(product, "", "") + msgTextInputHint
 	if state != nil && state.SearchField == "color" && strings.TrimSpace(state.SearchQuery) != "" {
-		text += "\n🔎 Поиск: " + state.SearchQuery
+		text += msgSearchAppliedPrefix + state.SearchQuery
 	}
 	return b.sendWithKeyboard(chatID, text, "color", options, service.LevelColor, "color", page, extractEditID(editMessageID...),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|product|here")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSaveHere, "save|product|here")),
 	)
 }
 
 func (b *Bot) askSection(chatID int64, product, color string, editMessageID ...int) error {
 	options, err := b.flow.ListSections(product, color)
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось получить список разделов:\n"+humanError(err))
+		return b.send(chatID, msgListSectionsError(err))
 	}
 	if len(options) == 0 {
-		return b.sendWithKeyboard(chatID, "🗂️ В этой папке цвета пока нет разделов.\n"+b.pathHint(product, color, "")+"\nСоздайте нужный раздел кнопкой ниже.", "section", options, service.LevelSection, "section", 0, extractEditID(editMessageID...),
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|color|here")),
+		return b.sendWithKeyboard(chatID, msgSectionsEmptyPrefix+b.pathHint(product, color, "")+msgSectionsEmptySuffix, "section", options, service.LevelSection, "section", 0, extractEditID(editMessageID...),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSaveHere, "save|color|here")),
 		)
 	}
 	state := b.getSession(chatID)
@@ -70,8 +70,8 @@ func (b *Bot) askSection(chatID int64, product, color string, editMessageID ...i
 	if state != nil {
 		page = state.PageSection
 	}
-	return b.sendWithKeyboard(chatID, "🗂️ Выберите раздел:\n"+b.pathHint(product, color, "")+"\n✍️ Можно ввести название текстом или полный путь.", "section", options, service.LevelSection, "section", page, extractEditID(editMessageID...),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📥 Сохранить в эту папку", "save|color|here")),
+	return b.sendWithKeyboard(chatID, msgChooseSectionPrefix+b.pathHint(product, color, "")+msgTextInputHint, "section", options, service.LevelSection, "section", page, extractEditID(editMessageID...),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSaveHere, "save|color|here")),
 	)
 }
 
@@ -120,20 +120,20 @@ func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string
 	if hasPrev || hasNext {
 		navRow := make([]tgbotapi.InlineKeyboardButton, 0, 3)
 		if hasPrev {
-			navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("⬅️ Назад", fmt.Sprintf("nav|%s|prev|%d", field, currentPage)))
+			navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData(btnNavPrev, fmt.Sprintf("nav|%s|prev|%d", field, currentPage)))
 		}
 		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData(fmt.Sprintf("Стр. %d/%d", currentPage+1, maxInt(totalPages, 1)), "noop|page|x"))
 		if hasNext {
-			navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("➡️ Далее", fmt.Sprintf("nav|%s|next|%d", field, currentPage)))
+			navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData(btnNavNext, fmt.Sprintf("nav|%s|next|%d", field, currentPage)))
 		}
 		rows = append(rows, navRow)
 	}
 	ctrl := make([]tgbotapi.InlineKeyboardButton, 0, 2)
 	if backStep != "" {
-		ctrl = append(ctrl, tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", fmt.Sprintf("back|%s|go", backStep)))
+		ctrl = append(ctrl, tgbotapi.NewInlineKeyboardButtonData(btnBack, fmt.Sprintf("back|%s|go", backStep)))
 	}
 	if addLevel != "" {
-		ctrl = append(ctrl, tgbotapi.NewInlineKeyboardButtonData("➕ Добавить папку", fmt.Sprintf("add|%s|new", addLevel)))
+		ctrl = append(ctrl, tgbotapi.NewInlineKeyboardButtonData(btnAddFolder, fmt.Sprintf("add|%s|new", addLevel)))
 	}
 	if len(ctrl) > 0 {
 		rows = append(rows, ctrl)
@@ -141,15 +141,15 @@ func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string
 	// Refresh + Home actions for faster recovery and up-to-date lists.
 	if field == "product" || field == "color" || field == "section" {
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Обновить список", fmt.Sprintf("refresh|%s|x", field)),
-			tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
+			tgbotapi.NewInlineKeyboardButtonData(btnRefresh, fmt.Sprintf("refresh|%s|x", field)),
+			tgbotapi.NewInlineKeyboardButtonData(btnHome, "home|go|x"),
 		))
 	}
 	if field == "product" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔎 Поиск товара", "search|product|start")))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSearchProduct, "search|product|start")))
 	}
 	if field == "color" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔎 Поиск цвета", "search|color|start")))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSearchColor, "search|color|start")))
 	}
 	rows = append(rows, extraRows...)
 	if len(rows) == 0 {
@@ -185,7 +185,7 @@ func (b *Bot) refreshLevel(chatID int64, state *sessionState) error {
 		return b.askSection(chatID, state.Product, state.Color)
 	default:
 		state.Awaiting = ""
-		return b.send(chatID, "Папка создана.")
+		return b.send(chatID, msgFolderCreatedPlain)
 	}
 }
 
@@ -194,14 +194,7 @@ func (b *Bot) sendWelcome(chatID int64) error {
 }
 
 func (b *Bot) welcomeText() string {
-	return "👋 Добро пожаловать в PicFolderBot.\n\n" +
-		"Что умею:\n" +
-		"• Помогаю выбрать товар → цвет → раздел\n" +
-		"• Загружаю изображение в выбранную папку\n" +
-		"• Создаю папки кнопкой ➕ на нужном уровне\n\n" +
-		"🚀 Нажмите /upload, чтобы начать.\n" +
-		"🔎 Для больших каталогов используйте /search.\n" +
-		"🖼️ Форматы: " + allowedFormatsText
+	return msgWelcomeText()
 }
 
 func (b *Bot) sendSearchMenu(chatID int64, state *sessionState) error {
@@ -209,10 +202,10 @@ func (b *Bot) sendSearchMenu(chatID int64, state *sessionState) error {
 		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔎 Поиск товара", "search|product|start")),
 	}
 	if strings.TrimSpace(state.Product) != "" {
-		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🔎 Поиск цвета в выбранном товаре", "search|color|start")))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSearchColorInProduct, "search|color|start")))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|product|go")))
-	msg := tgbotapi.NewMessage(chatID, "🔎 Выберите режим поиска:")
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnBack, "back|product|go")))
+	msg := tgbotapi.NewMessage(chatID, msgSearchMenuTitle)
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	return b.sendWithRetry(msg)
 }
@@ -232,5 +225,5 @@ func (b *Bot) pathHint(product, color, section string) string {
 	if s := strings.TrimSpace(section); s != "" {
 		parts = append(parts, s)
 	}
-	return "📁 Путь: " + strings.Join(parts, " / ")
+	return msgPathPrefix + strings.Join(parts, " / ")
 }

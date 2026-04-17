@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"errors"
 	"sync"
 
 	"PicFolderBot/internal/service"
@@ -22,8 +23,10 @@ type uploader struct {
 	workers int
 	queue   chan uploadTask
 
-	once sync.Once
-	wg   sync.WaitGroup
+	mu     sync.RWMutex
+	closed bool
+	once   sync.Once
+	wg     sync.WaitGroup
 }
 
 func newUploader(flow flowAPI, workers int, queueSize int) *uploader {
@@ -59,12 +62,27 @@ func (u *uploader) start() {
 }
 
 func (u *uploader) stop() {
+	u.mu.Lock()
+	if u.closed {
+		u.mu.Unlock()
+		return
+	}
+	u.closed = true
+	u.mu.Unlock()
 	close(u.queue)
 	u.wg.Wait()
 }
 
 func (u *uploader) submit(level string, payload service.UploadPayload) <-chan uploadResult {
 	done := make(chan uploadResult, 1)
+	u.mu.RLock()
+	closed := u.closed
+	u.mu.RUnlock()
+	if closed {
+		done <- uploadResult{Err: errors.New("uploader is stopped")}
+		close(done)
+		return done
+	}
 	u.queue <- uploadTask{Level: level, Payload: payload, Done: done}
 	return done
 }

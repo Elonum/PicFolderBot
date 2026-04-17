@@ -96,11 +96,11 @@ func NewBot(token string, flow flowAPI, sessionStore SessionStore, albumStore Al
 		return nil, err
 	}
 	_, _ = api.Request(tgbotapi.NewSetMyCommands(
-		tgbotapi.BotCommand{Command: "upload", Description: "Начать пошаговую загрузку"},
-		tgbotapi.BotCommand{Command: "search", Description: "Быстрый поиск товаров/цветов"},
-		tgbotapi.BotCommand{Command: "recent", Description: "Последние папки для загрузки"},
-		tgbotapi.BotCommand{Command: "help", Description: "Показать справку"},
-		tgbotapi.BotCommand{Command: "cancel", Description: "Отменить текущее действие"},
+		tgbotapi.BotCommand{Command: "upload", Description: cmdDescUpload},
+		tgbotapi.BotCommand{Command: "search", Description: cmdDescSearch},
+		tgbotapi.BotCommand{Command: "recent", Description: cmdDescRecent},
+		tgbotapi.BotCommand{Command: "help", Description: cmdDescHelp},
+		tgbotapi.BotCommand{Command: "cancel", Description: cmdDescCancel},
 	))
 	return &Bot{
 		api:          api,

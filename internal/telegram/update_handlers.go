@@ -35,12 +35,12 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 					state.UploadLevel = service.LevelSection
 				}
 				b.setSession(chatID, state)
-				if err := b.send(chatID, "📦 Уже есть ожидающий пакет файлов. Выберите путь — загружу автоматически."); err != nil {
+				if err := b.send(chatID, msgPendingAlbumExists); err != nil {
 					return err
 				}
 				return b.continueUploadFlow(chatID, state)
 			}
-			b.setSession(chatID, &sessionState{Awaiting: "product"})
+			b.setSession(chatID, &sessionState{Awaiting: awaitingProduct})
 			return b.askProduct(chatID)
 		case "search":
 			state := b.getSession(chatID)
@@ -53,9 +53,9 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 			return b.sendRecentMenu(chatID)
 		case "cancel":
 			b.clearSession(chatID)
-			return b.send(chatID, "🛑 Действие отменено. Нажмите /upload, чтобы начать заново.")
+			return b.send(chatID, msgCanceled)
 		default:
-			return b.send(chatID, "❓ Неизвестная команда. Доступно: /upload, /search, /help, /cancel")
+			return b.send(chatID, msgUnknownCommand)
 		}
 	}
 
@@ -67,18 +67,18 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 	}
 
 	state := b.getSession(chatID)
-	if state != nil && state.Awaiting == "new_folder_name" && msg.Text != "" {
+	if state != nil && state.Awaiting == awaitingNewFolderName && msg.Text != "" {
 		newFolder := strings.TrimSpace(msg.Text)
 		if newFolder == "" {
-			return b.send(chatID, "⚠️ Введите непустое имя новой папки.")
+			return b.send(chatID, msgNewFolderEmptyName)
 		}
 		level := state.AddLevel
 		target, err := b.flow.CreateFolderAtLevel(level, state.Product, state.Color, state.Section, newFolder)
 		if err != nil {
-			return b.send(chatID, "❌ Не удалось создать папку: "+humanError(err))
+			return b.send(chatID, msgFolderCreateError(err))
 		}
 		state.AddLevel = level
-		if err = b.send(chatID, "✅ Папка создана:\n"+target); err != nil {
+		if err = b.send(chatID, msgFolderCreated(target)); err != nil {
 			return err
 		}
 		// Invalidate cached listing for this level so the new folder appears immediately.
@@ -95,13 +95,13 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		b.setSession(chatID, state)
 		return err
 	}
-	if state != nil && state.Awaiting == "rename_single" && msg.Text != "" {
+	if state != nil && state.Awaiting == awaitingRenameSingle && msg.Text != "" {
 		typed := strings.TrimSpace(msg.Text)
 		if typed == "" {
-			return b.send(chatID, "⚠️ Введите новое имя файла.")
+			return b.send(chatID, msgRenameSingleEmpty)
 		}
 		state.FileName = applyRenameInput(state.FileName, typed, state.FileMIME)
-		state.Awaiting = "uploading"
+		state.Awaiting = awaitingUploading
 		b.setSession(chatID, state)
 		level := strings.TrimSpace(state.UploadLevel)
 		if level == "" {
@@ -109,24 +109,24 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		}
 		return b.enqueueSingleUpload(chatID, level, state, 0)
 	}
-	if state != nil && state.Awaiting == "rename_album" && msg.Text != "" {
+	if state != nil && state.Awaiting == awaitingRenameAlbum && msg.Text != "" {
 		typed := strings.TrimSpace(msg.Text)
 		if typed == "" {
-			return b.send(chatID, "⚠️ Введите новое базовое имя (применю ко всем файлам).")
+			return b.send(chatID, msgRenameAlbumEmpty)
 		}
 		key := strings.TrimSpace(state.PendingAlbumKey)
 		if key == "" {
-			state.Awaiting = "section"
+			state.Awaiting = awaitingSection
 			b.setSession(chatID, state)
-			return b.send(chatID, "⚠️ Не найден ожидающий пакет. Отправьте файлы ещё раз.")
+			return b.send(chatID, msgPendingAlbumHasNoKey)
 		}
 		b.renameAlbumFilenames(key, typed)
-		state.Awaiting = "uploading"
+		state.Awaiting = awaitingUploading
 		b.setSession(chatID, state)
 		go b.flushAlbum(key)
-		return b.send(chatID, "⏳ Применил переименование. Загружаю пакет…")
+		return b.send(chatID, msgRenameAlbumApplied)
 	}
-	if state != nil && state.Awaiting == "search_product_query" && msg.Text != "" {
+	if state != nil && state.Awaiting == awaitingSearchProduct && msg.Text != "" {
 		// Allow full-path input even inside /search query.
 		if ok, err := b.tryApplyFullPathInput(chatID, state, msg.Text); ok || err != nil {
 			return err
@@ -134,14 +134,14 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		query := strings.TrimSpace(msg.Text)
 		products, err := b.flow.ListProducts()
 		if err != nil {
-			return b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
+			return b.send(chatID, msgListProductsError(err))
 		}
 		res := resolveTypedOptionSmart(products, query)
 		if res.Value != "" {
 			state.Product, state.Color, state.Section = res.Value, "", ""
 			state.SearchField, state.SearchQuery = "", ""
 			state.PageColor, state.PageSection = 0, 0
-			state.Awaiting = "color"
+			state.Awaiting = awaitingColor
 			b.setSession(chatID, state)
 			go b.prefetchColors(res.Value)
 			return b.askColor(chatID, res.Value)
@@ -151,14 +151,14 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		state.PageProduct = 0
 		b.setSession(chatID, state)
 		if len(res.Suggestions) > 0 {
-			return b.sendResolveHint(chatID, "product", res, "🔎 Не нашел точное совпадение. Возможно, вы имели в виду:")
+			return b.sendResolveHint(chatID, "product", res, msgResolveNoExactMatch)
 		}
 		return b.askProduct(chatID)
 	}
-	if state != nil && state.Awaiting == "search_color_query" && msg.Text != "" {
+	if state != nil && state.Awaiting == awaitingSearchColor && msg.Text != "" {
 		if strings.TrimSpace(state.Product) == "" {
-			state.Awaiting = "product"
-			return b.send(chatID, "⚠️ Сначала выберите товар, затем выполните поиск по цветам.")
+			state.Awaiting = awaitingProduct
+			return b.send(chatID, msgSearchColorNeedProduct)
 		}
 		// Allow full-path input even inside /search query.
 		if ok, err := b.tryApplyFullPathInput(chatID, state, msg.Text); ok || err != nil {
@@ -167,14 +167,14 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		query := strings.TrimSpace(msg.Text)
 		colors, err := b.flow.ListColors(state.Product)
 		if err != nil {
-			return b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
+			return b.send(chatID, msgListColorsError(err))
 		}
 		res := resolveTypedOptionSmart(colors, query)
 		if res.Value != "" {
 			state.Color, state.Section = res.Value, ""
 			state.SearchField, state.SearchQuery = "", ""
 			state.PageSection = 0
-			state.Awaiting = "section"
+			state.Awaiting = awaitingSection
 			b.setSession(chatID, state)
 			go b.prefetchSections(state.Product, res.Value)
 			return b.askSection(chatID, state.Product, res.Value)
@@ -184,7 +184,7 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		state.PageColor = 0
 		b.setSession(chatID, state)
 		if len(res.Suggestions) > 0 {
-			return b.sendResolveHint(chatID, "color", res, "🔎 Не нашел точное совпадение. Возможно, вы имели в виду:")
+			return b.sendResolveHint(chatID, "color", res, msgResolveNoExactMatch)
 		}
 		return b.askColor(chatID, state.Product)
 	}
@@ -199,11 +199,11 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 	}
 
 	state = b.getSession(chatID)
-	if state != nil && state.Awaiting == "photo" {
-		return b.send(chatID, "🖼️ Ожидаю изображение.\nРазрешенные форматы: "+allowedFormatsText)
+	if state != nil && state.Awaiting == awaitingPhoto {
+		return b.send(chatID, msgWaitPhoto)
 	}
 	// Sticky mode: no dedicated "post success" state is required.
-	return b.send(chatID, "ℹ️ Отправьте фото с подписью или используйте /upload для пошаговой загрузки.")
+	return b.send(chatID, msgDefaultHint)
 }
 
 func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input string) (bool, error) {
@@ -219,11 +219,11 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 	case "product":
 		options, err := b.flow.ListProducts()
 		if err != nil {
-			return true, b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
+			return true, b.send(chatID, msgListProductsError(err))
 		}
 		res := resolveTypedOptionSmart(options, value)
 		if res.Value == "" {
-			return true, b.sendResolveHint(chatID, "product", res, "⚠️ Не удалось однозначно определить папку товара.")
+			return true, b.sendResolveHint(chatID, "product", res, msgResolveProductAmbiguous)
 		}
 		state.Product, state.Color, state.Section = res.Value, "", ""
 		state.PageColor, state.PageSection = 0, 0
@@ -236,11 +236,11 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		}
 		options, err := b.flow.ListColors(state.Product)
 		if err != nil {
-			return true, b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
+			return true, b.send(chatID, msgListColorsError(err))
 		}
 		res := resolveTypedOptionSmart(options, value)
 		if res.Value == "" {
-			return true, b.sendResolveHint(chatID, "color", res, "⚠️ Не удалось однозначно определить папку цвета.")
+			return true, b.sendResolveHint(chatID, "color", res, msgResolveColorAmbiguous)
 		}
 		state.Color, state.Section = res.Value, ""
 		state.PageSection = 0
@@ -253,11 +253,11 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		}
 		options, err := b.flow.ListSections(state.Product, state.Color)
 		if err != nil {
-			return true, b.send(chatID, "❌ Не удалось получить список разделов:\n"+humanError(err))
+			return true, b.send(chatID, msgListSectionsError(err))
 		}
 		res := resolveTypedOptionSmart(options, value)
 		if res.Value == "" {
-			return true, b.sendResolveHint(chatID, "section", res, "⚠️ Не удалось однозначно определить папку раздела.")
+			return true, b.sendResolveHint(chatID, "section", res, msgResolveSectionAmbiguous)
 		}
 		state.Section = res.Value
 		b.setSession(chatID, state)
@@ -276,13 +276,13 @@ func (b *Bot) tryApplyFullPathInput(chatID int64, state *sessionState, input str
 	// If some level is wrong/ambiguous, stop there and suggest options for that level.
 	products, err := b.flow.ListProducts()
 	if err != nil {
-		return true, b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
+		return true, b.send(chatID, msgListProductsError(err))
 	}
 	productRes := resolveTypedOptionSmart(products, productRaw)
 	if productRes.Value == "" {
-		state.Awaiting = "product"
+		state.Awaiting = awaitingProduct
 		b.setSession(chatID, state)
-		return true, b.sendResolveHint(chatID, "product", productRes, "⚠️ Товар из полного пути не найден или неоднозначен.")
+		return true, b.sendResolveHint(chatID, "product", productRes, msgResolvePathProductAmbiguous)
 	}
 	product := productRes.Value
 	state.Product, state.Color, state.Section = product, "", ""
@@ -290,13 +290,13 @@ func (b *Bot) tryApplyFullPathInput(chatID int64, state *sessionState, input str
 	b.setSession(chatID, state)
 	colors, err := b.flow.ListColors(product)
 	if err != nil {
-		return true, b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
+		return true, b.send(chatID, msgListColorsError(err))
 	}
 	colorRes := resolveTypedOptionSmart(colors, colorRaw)
 	if colorRes.Value == "" {
-		state.Awaiting = "color"
+		state.Awaiting = awaitingColor
 		b.setSession(chatID, state)
-		return true, b.sendResolveHint(chatID, "color", colorRes, "⚠️ Товар найден. Цвет из полного пути не найден или неоднозначен.")
+		return true, b.sendResolveHint(chatID, "color", colorRes, msgResolvePathColorAmbiguous)
 	}
 	color := colorRes.Value
 	state.Color, state.Section = color, ""
@@ -304,13 +304,13 @@ func (b *Bot) tryApplyFullPathInput(chatID int64, state *sessionState, input str
 	b.setSession(chatID, state)
 	sections, err := b.flow.ListSections(product, color)
 	if err != nil {
-		return true, b.send(chatID, "❌ Не удалось получить список разделов:\n"+humanError(err))
+		return true, b.send(chatID, msgListSectionsError(err))
 	}
 	sectionRes := resolveTypedOptionSmart(sections, sectionRaw)
 	if sectionRes.Value == "" {
-		state.Awaiting = "section"
+		state.Awaiting = awaitingSection
 		b.setSession(chatID, state)
-		return true, b.sendResolveHint(chatID, "section", sectionRes, "⚠️ Товар и цвет найдены. Раздел из полного пути не найден или неоднозначен.")
+		return true, b.sendResolveHint(chatID, "section", sectionRes, msgResolvePathSectionAmbiguous)
 	}
 	section := sectionRes.Value
 	state.Product, state.Color, state.Section = product, color, section
@@ -349,9 +349,9 @@ func splitBySeparators(input string) []string {
 
 func (b *Bot) sendResolveHint(chatID int64, field string, res optionResolution, baseText string) error {
 	if len(res.Suggestions) == 0 {
-		return b.send(chatID, baseText+"\nВведите точнее или выберите кнопку из списка.")
+		return b.send(chatID, baseText+msgResolveHintNoSuggestions)
 	}
-	text := baseText + "\nВарианты ниже помогут выбрать быстрее."
+	text := baseText + msgResolveHintHasSuggestions
 	backStep := ""
 	switch field {
 	case "product":
@@ -362,9 +362,9 @@ func (b *Bot) sendResolveHint(chatID int64, field string, res optionResolution, 
 		backStep = "section"
 	}
 	extra := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("✏️ Изменить запрос", fmt.Sprintf("search|%s|start", field))),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("📋 Показать список", fmt.Sprintf("show|%s|list", field))),
-		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x")),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnEditQuery, fmt.Sprintf("search|%s|start", field))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnShowList, fmt.Sprintf("show|%s|list", field))),
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnHome, "home|go|x")),
 	}
 	return b.sendWithKeyboard(chatID, text, field, res.Suggestions, "", backStep, 0, 0, extra...)
 }
@@ -372,7 +372,7 @@ func (b *Bot) sendResolveHint(chatID int64, field string, res optionResolution, 
 func (b *Bot) sendRecentMenu(chatID int64) error {
 	items := b.recent.List(chatID)
 	if len(items) == 0 {
-		return b.send(chatID, "🕘 Пока нет последних папок. Загрузите хотя бы одно изображение — я запомню путь.")
+		return b.send(chatID, msgRecentEmpty)
 	}
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(items)+1)
 	for i, it := range items {
@@ -388,14 +388,14 @@ func (b *Bot) sendRecentMenu(chatID int64) error {
 		}
 		label := strings.Join(parts, " / ")
 		if label == "" {
-			label = "Путь не определен"
+			label = msgRecentPathUndefined
 		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(trimButtonLabel(label), fmt.Sprintf("recent|use|%d", i)),
 		))
 	}
-	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x")))
-	msg := tgbotapi.NewMessage(chatID, "🕘 Последние папки (выберите, и я продолжу):")
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnHome, "home|go|x")))
+	msg := tgbotapi.NewMessage(chatID, msgRecentTitle)
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	return b.sendWithRetry(msg)
 }
@@ -439,7 +439,7 @@ func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, pro
 	b.setSession(chatID, state)
 	b.albumStore.Set(key, buf)
 	if needNotify {
-		return b.send(chatID, "📦 Получено несколько файлов. Загружаю одним пакетом...")
+		return b.send(chatID, msgBatchReceived)
 	}
 	return nil
 }
@@ -457,7 +457,7 @@ func (b *Bot) flushAlbum(key string) {
 	// Guard: if we already asked for rename for this album, do not spam the chat
 	// on repeated timer flushes/callback-triggered flushes.
 	if st := b.getSession(buf.ChatID); st != nil {
-		if st.Awaiting == "rename_album" && strings.TrimSpace(st.PendingAlbumKey) == key {
+		if st.Awaiting == awaitingRenameAlbum && strings.TrimSpace(st.PendingAlbumKey) == key {
 			b.albumsMu.Unlock()
 			return
 		}
@@ -484,7 +484,7 @@ func (b *Bot) flushAlbum(key string) {
 		return
 	}
 	// If we are uploading now, skip rename prompt and proceed.
-	if st := b.getSession(buf.ChatID); st != nil && st.Awaiting == "uploading" && strings.TrimSpace(st.PendingAlbumKey) == key {
+	if st := b.getSession(buf.ChatID); st != nil && st.Awaiting == awaitingUploading && strings.TrimSpace(st.PendingAlbumKey) == key {
 		// proceed
 	} else if level == service.LevelSection && isTitularSectionName(buf.Section) {
 		// Ask once for the whole album before uploading.
@@ -493,19 +493,19 @@ func (b *Bot) flushAlbum(key string) {
 			state = &sessionState{}
 		}
 		state.PendingAlbumKey = key
-		state.Awaiting = "rename_album"
+		state.Awaiting = awaitingRenameAlbum
 		b.setSession(buf.ChatID, state)
 		b.albumStore.Set(key, buf)
 		b.albumsMu.Unlock()
 		_ = b.sendWithKeyboard(buf.ChatID,
-			"✍️ Переименование файлов (титульники)\n\nВведите новое базовое имя.\nЯ применю его ко всем файлам как: Имя_01.jpg, Имя_02.jpg …\n\nИли нажмите «Без изменений».",
+			msgRenameAlbumPrompt,
 			"", nil, "", "section", 0, 0,
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("⏭️ Без изменений", "rename|album|skip"),
+				tgbotapi.NewInlineKeyboardButtonData(btnSkip, "rename|album|skip"),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
-				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+				tgbotapi.NewInlineKeyboardButtonData(btnBack, "back|section|stay"),
+				tgbotapi.NewInlineKeyboardButtonData(btnChangePath, "post|change|path"),
 			),
 		)
 		return
@@ -540,10 +540,7 @@ func (b *Bot) flushAlbum(key string) {
 		}
 		success++
 	}
-	result := fmt.Sprintf("✅ Пакетная загрузка завершена.\nУспешно: %d\nС ошибками: %d", success, fail)
-	if savedFolder != "" {
-		result += "\nСохранено в:\n" + savedFolder
-	}
+	result := msgBatchResult(success, fail, savedFolder)
 	state := b.getSession(buf.ChatID)
 	if state != nil && state.PendingAlbumKey == key {
 		state.PendingAlbumKey = ""
@@ -560,20 +557,10 @@ func (b *Bot) flushAlbum(key string) {
 	}
 	state = b.getSession(buf.ChatID)
 	if state != nil {
-		state.Awaiting = "photo"
+		state.Awaiting = awaitingPhoto
 		b.setSession(buf.ChatID, state)
 	}
-	rows := [][]tgbotapi.InlineKeyboardButton{
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
-			tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🕘 Последние", "recent|open|x"),
-			tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
-		),
-	}
-	_ = b.sendCustomKeyboard(buf.ChatID, result+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", rows, 0)
+	_ = b.sendCustomKeyboard(buf.ChatID, msgBatchUploadSuccess(result), uploadSuccessRows(), 0)
 }
 
 func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (bool, error) {
@@ -603,7 +590,7 @@ func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (boo
 		return false, nil
 	}
 	go b.flushAlbum(key)
-	return true, b.send(chatID, "⏳ Путь выбран. Загружаю ранее отправленный пакет...")
+	return true, b.send(chatID, msgAlbumPathSelectedFlushing)
 }
 
 func (b *Bot) promptPendingAlbumPath(chatID int64, state *sessionState) error {
@@ -612,7 +599,7 @@ func (b *Bot) promptPendingAlbumPath(chatID int64, state *sessionState) error {
 	}
 	state.Awaiting = nextAwaitingForLevel(state.UploadLevel, state)
 	b.setSession(chatID, state)
-	if err := b.send(chatID, "⚠️ Для пакетной загрузки выберите путь — и я автоматически загружу уже отправленные файлы."); err != nil {
+	if err := b.send(chatID, msgAlbumChoosePath); err != nil {
 		return err
 	}
 	return b.continueUploadFlow(chatID, state)

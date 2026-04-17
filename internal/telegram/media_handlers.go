@@ -13,17 +13,17 @@ import (
 func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 	chatID := msg.Chat.ID
 	if len(msg.Photo) == 0 {
-		return b.send(chatID, "⚠️ Не удалось прочитать изображение. Отправьте фото еще раз.")
+		return b.send(chatID, msgPhotoReadFailed)
 	}
 	file := msg.Photo[len(msg.Photo)-1]
 
 	fileURL, err := b.api.GetFileDirectURL(file.FileID)
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось получить файл из Telegram.")
+		return b.send(chatID, msgTelegramGetFileFailed)
 	}
 	content, mimeType, err := downloadFile(fileURL)
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось скачать изображение.")
+		return b.send(chatID, msgTelegramDownloadFailed)
 	}
 	// Telegram message.Photo is always an image payload selected via "Send an image".
 	// Some Telegram CDN responses can expose generic MIME values, so we force safe image fallback.
@@ -58,18 +58,18 @@ func (b *Bot) handleDocument(msg *tgbotapi.Message) error {
 		return nil
 	}
 	if !isAllowedImageMIME(doc.MimeType) && !isAllowedImageExtension(doc.FileName) {
-		return b.send(chatID, "⚠️ Неподдерживаемый формат файла.\nРазрешенные форматы: "+allowedFormatsText)
+		return b.send(chatID, msgUnsupportedFormat)
 	}
 	fileURL, err := b.api.GetFileDirectURL(doc.FileID)
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось получить файл из Telegram.")
+		return b.send(chatID, msgTelegramGetFileFailed)
 	}
 	content, mimeType, err := downloadFile(fileURL)
 	if err != nil {
-		return b.send(chatID, "❌ Не удалось скачать изображение.")
+		return b.send(chatID, msgTelegramDownloadFailed)
 	}
 	if !isAllowedImageMIME(mimeType) && !isAllowedImageExtension(doc.FileName) {
-		return b.send(chatID, "⚠️ Неподдерживаемый формат файла.\nРазрешенные форматы: "+allowedFormatsText)
+		return b.send(chatID, msgUnsupportedFormat)
 	}
 	fileName := buildFileName(doc.FileName, mimeType)
 	if msg.MediaGroupID != "" {
@@ -99,17 +99,17 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 	}
 
 	if state.Product == "" {
-		state.Awaiting = "product"
+		state.Awaiting = awaitingProduct
 		b.setSession(chatID, state)
 		return b.askProduct(chatID, editMessageID...)
 	}
 	if level != service.LevelProduct && state.Color == "" {
-		state.Awaiting = "color"
+		state.Awaiting = awaitingColor
 		b.setSession(chatID, state)
 		return b.askColor(chatID, state.Product, editMessageID...)
 	}
 	if level == service.LevelSection && state.Section == "" {
-		state.Awaiting = "section"
+		state.Awaiting = awaitingSection
 		b.setSession(chatID, state)
 		return b.askSection(chatID, state.Product, state.Color, editMessageID...)
 	}
@@ -117,23 +117,23 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 		return err
 	}
 	if len(state.FileBytes) == 0 {
-		state.Awaiting = "photo"
+		state.Awaiting = awaitingPhoto
 		b.setSession(chatID, state)
-		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
+		return b.sendWithKeyboard(chatID, msgSendPhotoNow+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
 	}
 
 	// If we are in a titular section, offer renaming before upload.
 	if level == service.LevelSection && isTitularSectionName(state.Section) {
-		state.Awaiting = "rename_single"
+		state.Awaiting = awaitingRenameSingle
 		b.setSession(chatID, state)
 		rows := [][]tgbotapi.InlineKeyboardButton{
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏭️ Без изменений", "rename|single|skip")),
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnSkip, "rename|single|skip")),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
-				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+				tgbotapi.NewInlineKeyboardButtonData(btnBack, "back|section|stay"),
+				tgbotapi.NewInlineKeyboardButtonData(btnChangePath, "post|change|path"),
 			),
 		}
-		text := "✍️ Переименование файла (титульники)\n\nТекущее имя:\n" + state.FileName + "\n\nОтправьте новое имя файла.\nМожно без расширения — я сохраню текущее."
+		text := msgRenameSinglePrompt(state.FileName)
 		return b.sendCustomKeyboard(chatID, text, rows, extractEditID(editMessageID...))
 	}
 	return b.enqueueSingleUpload(chatID, level, state, extractEditID(editMessageID...))
@@ -161,7 +161,7 @@ func (b *Bot) resolveUploadContext(chatID int64, caption string) (string, string
 
 func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionState, editMessageID int) error {
 	if b.uploader == nil {
-		return b.send(chatID, "❌ Ошибка: uploader не инициализирован.")
+		return b.send(chatID, msgUploaderNotInitialized)
 	}
 	payload := service.UploadPayload{
 		Product:  state.Product,
@@ -173,10 +173,10 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 	}
 	// Clear file bytes immediately to keep session small and UI responsive.
 	state.FileID, state.FileName, state.FileMIME, state.FileBytes = "", "", "", nil
-	state.Awaiting = "uploading"
+	state.Awaiting = awaitingUploading
 	b.setSession(chatID, state)
 
-	if err := b.sendOrEditText(chatID, "⏳ Загружаю в Яндекс.Диск…", editMessageID); err != nil {
+	if err := b.sendOrEditText(chatID, msgUploadInProgress, editMessageID); err != nil {
 		return err
 	}
 
@@ -188,9 +188,9 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 			s = &sessionState{}
 		}
 		if res.Err != nil {
-			s.Awaiting = "photo"
+			s.Awaiting = awaitingPhoto
 			b.setSession(chatID, s)
-			_ = b.send(chatID, "❌ Ошибка загрузки в Яндекс.Диск:\n"+humanError(res.Err))
+			_ = b.send(chatID, msgDiskUploadErrorPrefix+humanError(res.Err))
 			return
 		}
 		// Remember successful path for quick reuse.
@@ -201,19 +201,22 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 			Level:   level,
 		})
 		// Sticky mode: keep the chosen path and wait for new files.
-		s.Awaiting = "photo"
+		s.Awaiting = awaitingPhoto
 		b.setSession(chatID, s)
-		rows := [][]tgbotapi.InlineKeyboardButton{
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
-				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
-			),
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("🕘 Последние", "recent|open|x"),
-				tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
-			),
-		}
-		_ = b.sendCustomKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+res.Target+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", rows, 0)
+		_ = b.sendCustomKeyboard(chatID, msgUploadSuccess(res.Target), uploadSuccessRows(), 0)
 	}()
 	return nil
+}
+
+func uploadSuccessRows() [][]tgbotapi.InlineKeyboardButton {
+	return [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(btnBack, "back|section|stay"),
+			tgbotapi.NewInlineKeyboardButtonData(btnChangePath, "post|change|path"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(btnRecent, "recent|open|x"),
+			tgbotapi.NewInlineKeyboardButtonData(btnHome, "home|go|x"),
+		),
+	}
 }

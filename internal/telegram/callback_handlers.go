@@ -24,13 +24,13 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 	}
 
 	switch parts[0] {
-	case "set":
+	case cbActionSet:
 		if len(parts) != 3 {
 			return nil
 		}
 		b.applySetSelection(state, parts[1], parts[2])
 		b.setSession(chatID, state)
-	case "pick":
+	case cbActionPick:
 		if len(parts) != 3 || parts[2] != "set" {
 			return nil
 		}
@@ -41,65 +41,65 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		}
 		b.applySetSelection(state, chunks[0], chunks[1])
 		b.setSession(chatID, state)
-	case "add":
+	case cbActionAdd:
 		if len(parts) != 3 || parts[2] != "new" {
 			return nil
 		}
-		state.AddLevel, state.Awaiting = parts[1], "new_folder_name"
+		state.AddLevel, state.Awaiting = parts[1], awaitingNewFolderName
 		b.setSession(chatID, state)
-		return b.sendWithKeyboard(chatID, "📁 Введите название новой папки:", "", nil, "", "", 0, msgID,
-			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", fmt.Sprintf("back|%s|stay", parts[1]))),
+		return b.sendWithKeyboard(chatID, msgAskNewFolderName, "", nil, "", "", 0, msgID,
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(btnBack, fmt.Sprintf("back|%s|stay", parts[1]))),
 		)
-	case "search":
+	case cbActionSearch:
 		if len(parts) != 3 || parts[2] != "start" {
 			return nil
 		}
 		if parts[1] == "product" {
-			state.Awaiting = "search_product_query"
+			state.Awaiting = awaitingSearchProduct
 			b.setSession(chatID, state)
-			return b.send(chatID, "🔎 Введите часть названия товара для поиска:")
+			return b.send(chatID, msgSearchPromptProduct)
 		}
 		if parts[1] == "color" {
 			if strings.TrimSpace(state.Product) == "" {
-				state.Awaiting = "product"
-				return b.send(chatID, "⚠️ Сначала выберите товар, затем выполните поиск по цветам.")
+				state.Awaiting = awaitingProduct
+				return b.send(chatID, msgSearchColorNeedProduct)
 			}
-			state.Awaiting = "search_color_query"
+			state.Awaiting = awaitingSearchColor
 			b.setSession(chatID, state)
-			return b.send(chatID, "🔎 Введите часть названия цвета для поиска:")
+			return b.send(chatID, msgSearchPromptColor)
 		}
 		return nil
-	case "show":
+	case cbActionShow:
 		if len(parts) != 3 || parts[2] != "list" {
 			return nil
 		}
 		switch parts[1] {
 		case "product":
-			state.Awaiting = "product"
+			state.Awaiting = awaitingProduct
 			b.setSession(chatID, state)
 			return b.askProduct(chatID, msgID)
 		case "color":
 			if strings.TrimSpace(state.Product) == "" {
-				state.Awaiting = "product"
+				state.Awaiting = awaitingProduct
 				b.setSession(chatID, state)
 				return b.askProduct(chatID, msgID)
 			}
-			state.Awaiting = "color"
+			state.Awaiting = awaitingColor
 			b.setSession(chatID, state)
 			return b.askColor(chatID, state.Product, msgID)
 		case "section":
 			if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" {
-				state.Awaiting = "product"
+				state.Awaiting = awaitingProduct
 				b.setSession(chatID, state)
 				return b.askProduct(chatID, msgID)
 			}
-			state.Awaiting = "section"
+			state.Awaiting = awaitingSection
 			b.setSession(chatID, state)
 			return b.askSection(chatID, state.Product, state.Color, msgID)
 		default:
 			return nil
 		}
-	case "post":
+	case cbActionPost:
 		if len(parts) != 3 {
 			return nil
 		}
@@ -107,12 +107,12 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			state.Section, state.Color = "", ""
 			state.UploadLevel = ""
 			state.PageColor, state.PageSection = 0, 0
-			state.Awaiting = "product"
+			state.Awaiting = awaitingProduct
 			b.setSession(chatID, state)
 			return b.askProduct(chatID)
 		}
 		return nil
-	case "rename":
+	case cbActionRename:
 		if len(parts) != 3 {
 			return nil
 		}
@@ -123,7 +123,7 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 				if level == "" {
 					level = service.LevelSection
 				}
-				state.Awaiting = "uploading"
+				state.Awaiting = awaitingUploading
 				b.setSession(chatID, state)
 				return b.enqueueSingleUpload(chatID, level, state, msgID)
 			}
@@ -131,16 +131,16 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			if parts[2] == "skip" {
 				key := strings.TrimSpace(state.PendingAlbumKey)
 				if key == "" {
-					return b.send(chatID, "⚠️ Не найден ожидающий пакет. Отправьте файлы ещё раз.")
+					return b.send(chatID, msgPendingAlbumHasNoKey)
 				}
-				state.Awaiting = "uploading"
+				state.Awaiting = awaitingUploading
 				b.setSession(chatID, state)
 				go b.flushAlbum(key)
-				return b.sendOrEditText(chatID, "⏳ Загружаю пакет…", msgID)
+				return b.sendOrEditText(chatID, msgBatchInProgress, msgID)
 			}
 		}
 		return nil
-	case "recent":
+	case cbActionRecent:
 		// recent|open|x OR recent|use|<idx>
 		if len(parts) != 3 {
 			return nil
@@ -165,11 +165,17 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 				state.UploadLevel = service.LevelSection
 			}
 			b.setSession(chatID, state)
-			_, _ = b.tryApplyFullPathInput(chatID, state, text)
+			handled, err := b.tryApplyFullPathInput(chatID, state, text)
+			if err != nil {
+				return err
+			}
+			if !handled {
+				return b.send(chatID, msgRecentPathApplyFailed)
+			}
 			return nil
 		}
 		return nil
-	case "refresh":
+	case cbActionRefresh:
 		if len(parts) != 3 {
 			return nil
 		}
@@ -186,13 +192,13 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		default:
 			return nil
 		}
-	case "home":
+	case cbActionHome:
 		if len(parts) != 3 || parts[1] != "go" {
 			return nil
 		}
 		b.clearSession(chatID)
 		return b.sendOrEditText(chatID, b.welcomeText(), msgID)
-	case "save":
+	case cbActionSave:
 		if len(parts) != 3 || parts[2] != "here" {
 			return nil
 		}
@@ -200,26 +206,26 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		switch level {
 		case "product":
 			if strings.TrimSpace(state.Product) == "" {
-				return b.send(chatID, "⚠️ Сначала выберите товар.")
+				return b.send(chatID, msgSelectProductFirst)
 			}
 			state.UploadLevel = "product"
 		case "color":
 			if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" {
-				return b.send(chatID, "⚠️ Сначала выберите товар и цвет.")
+				return b.send(chatID, msgSelectProductColorFirst)
 			}
 			state.UploadLevel = "color"
 		case "section":
 			if strings.TrimSpace(state.Product) == "" || strings.TrimSpace(state.Color) == "" || strings.TrimSpace(state.Section) == "" {
-				return b.send(chatID, "⚠️ Сначала выберите товар, цвет и раздел.")
+				return b.send(chatID, msgSelectProductColorSectionFirst)
 			}
 			state.UploadLevel = "section"
 		default:
 			return nil
 		}
-		state.Awaiting = "photo"
+		state.Awaiting = awaitingPhoto
 		b.setSession(chatID, state)
-		return b.sendOrEditText(chatID, "📥 Отправьте фото — сохраню в текущую папку.", msgID)
-	case "nav":
+		return b.sendOrEditText(chatID, msgSendPhotoToCurrentFolder, msgID)
+	case cbActionNav:
 		if len(parts) != 4 {
 			return nil
 		}
@@ -243,12 +249,12 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		default:
 			return nil
 		}
-	case "back":
+	case cbActionBack:
 		if len(parts) != 3 {
 			return nil
 		}
 		return b.handleBackAction(chatID, msgID, state, parts[1], parts[2])
-	case "noop":
+	case cbActionNoop:
 		return nil
 	default:
 		return nil
@@ -284,22 +290,10 @@ func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, ste
 		// wiping already selected upper levels.
 		state.AddLevel = ""
 		state.UploadLevel = ""
-		switch step {
-		case "product":
-			state.Awaiting = "product"
-			b.setSession(chatID, state)
-			return b.askProduct(chatID, msgID)
-		case "color":
-			state.Awaiting = "color"
-			b.setSession(chatID, state)
-			return b.askColor(chatID, state.Product, msgID)
-		case "section":
-			state.Awaiting = "section"
-			b.setSession(chatID, state)
-			return b.askSection(chatID, state.Product, state.Color, msgID)
-		default:
-			return nil
-		}
+		target := b.resolveBackTarget(step, state)
+		state.Awaiting = target
+		b.setSession(chatID, state)
+		return b.renderStep(chatID, msgID, state, target)
 	}
 	switch step {
 	case "product":
@@ -310,14 +304,55 @@ func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, ste
 		state.UploadLevel = ""
 		state.PageColor, state.PageSection = 0, 0
 		b.setSession(chatID, state)
-		return b.askProduct(chatID, msgID)
+		return b.renderStep(chatID, msgID, state, "product")
 	case "section":
 		state.Section = ""
 		state.UploadLevel = ""
 		state.PageSection = 0
 		b.setSession(chatID, state)
-		return b.askColor(chatID, state.Product, msgID)
+		return b.renderStep(chatID, msgID, state, "color")
 	default:
 		return nil
+	}
+}
+
+func (b *Bot) resolveBackTarget(preferred string, state *sessionState) string {
+	switch preferred {
+	case "product":
+		return "product"
+	case "color":
+		if strings.TrimSpace(state.Product) == "" {
+			return "product"
+		}
+		return "color"
+	case "section":
+		if strings.TrimSpace(state.Product) == "" {
+			return "product"
+		}
+		if strings.TrimSpace(state.Color) == "" {
+			return "color"
+		}
+		return "section"
+	default:
+		if strings.TrimSpace(state.Product) == "" {
+			return "product"
+		}
+		if strings.TrimSpace(state.Color) == "" {
+			return "color"
+		}
+		return "section"
+	}
+}
+
+func (b *Bot) renderStep(chatID int64, msgID int, state *sessionState, step string) error {
+	switch step {
+	case "product":
+		return b.askProduct(chatID, msgID)
+	case "color":
+		return b.askColor(chatID, state.Product, msgID)
+	case "section":
+		return b.askSection(chatID, state.Product, state.Color, msgID)
+	default:
+		return b.askProduct(chatID, msgID)
 	}
 }

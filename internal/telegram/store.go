@@ -41,15 +41,15 @@ func (s *memorySessionStore) Get(chatID int64) *sessionState {
 		}
 		return nil
 	}
-	cp := *entry.State
-	return &cp
+	cp := cloneSessionState(entry.State)
+	return cp
 }
 
 func (s *memorySessionStore) Set(chatID int64, state *sessionState) {
-	cp := *state
+	cp := cloneSessionState(state)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items[chatID] = sessionEntry{State: &cp, ExpiresAt: time.Now().Add(s.ttl)}
+	s.items[chatID] = sessionEntry{State: cp, ExpiresAt: time.Now().Add(s.ttl)}
 }
 
 func (s *memorySessionStore) Delete(chatID int64) {
@@ -90,4 +90,21 @@ func (s *redisSessionStore) Delete(chatID int64) {
 
 func sessionKey(chatID int64) string {
 	return "tg:session:" + fmt.Sprintf("%d", chatID)
+}
+
+func cloneSessionState(state *sessionState) *sessionState {
+	if state == nil {
+		return &sessionState{}
+	}
+	cp := *state
+	if state.ValueMap != nil {
+		cp.ValueMap = make(map[string]string, len(state.ValueMap))
+		for k, v := range state.ValueMap {
+			cp.ValueMap[k] = v
+		}
+	}
+	if state.FileBytes != nil {
+		cp.FileBytes = append([]byte(nil), state.FileBytes...)
+	}
+	return &cp
 }
