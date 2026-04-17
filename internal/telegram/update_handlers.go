@@ -26,6 +26,20 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		case "start", "help":
 			return b.sendWelcome(chatID)
 		case "upload":
+			state := b.getSession(chatID)
+			if state == nil {
+				state = &sessionState{}
+			}
+			if strings.TrimSpace(state.PendingAlbumKey) != "" {
+				if strings.TrimSpace(state.UploadLevel) == "" {
+					state.UploadLevel = service.LevelSection
+				}
+				b.setSession(chatID, state)
+				if err := b.send(chatID, "📦 Уже есть ожидающий пакет файлов. Выберите путь — загружу автоматически."); err != nil {
+					return err
+				}
+				return b.continueUploadFlow(chatID, state)
+			}
 			b.setSession(chatID, &sessionState{Awaiting: "product"})
 			return b.askProduct(chatID)
 		case "search":
@@ -326,9 +340,12 @@ func (b *Bot) flushAlbum(key string) {
 			b.setSession(buf.ChatID, state)
 		}
 		state.PendingAlbumKey = key
+		if strings.TrimSpace(state.UploadLevel) == "" {
+			state.UploadLevel = level
+		}
 		b.setSession(buf.ChatID, state)
 		b.albumStore.Set(key, buf)
-		_ = b.send(buf.ChatID, "⚠️ Для пакетной загрузки выберите путь, и я автоматически загружу уже отправленные файлы.")
+		_ = b.promptPendingAlbumPath(buf.ChatID, state)
 		return
 	}
 	delete(b.albums, key)
@@ -396,6 +413,31 @@ func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (boo
 	}
 	go b.flushAlbum(key)
 	return true, b.send(chatID, "⏳ Путь выбран. Загружаю ранее отправленный пакет...")
+}
+
+func (b *Bot) promptPendingAlbumPath(chatID int64, state *sessionState) error {
+	if strings.TrimSpace(state.UploadLevel) == "" {
+		state.UploadLevel = service.LevelSection
+	}
+	state.Awaiting = nextAwaitingForLevel(state.UploadLevel, state)
+	b.setSession(chatID, state)
+	if err := b.send(chatID, "⚠️ Для пакетной загрузки выберите путь — и я автоматически загружу уже отправленные файлы."); err != nil {
+		return err
+	}
+	return b.continueUploadFlow(chatID, state)
+}
+
+func nextAwaitingForLevel(level string, state *sessionState) string {
+	if strings.TrimSpace(state.Product) == "" {
+		return "product"
+	}
+	if level != service.LevelProduct && strings.TrimSpace(state.Color) == "" {
+		return "color"
+	}
+	if level == service.LevelSection && strings.TrimSpace(state.Section) == "" {
+		return "section"
+	}
+	return "photo"
 }
 
 func (b *Bot) fillAlbumPathFromSession(buf *albumBuffer) {

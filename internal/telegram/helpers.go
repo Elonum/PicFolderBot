@@ -191,6 +191,9 @@ func (b *Bot) sendWithRetry(chattable tgbotapi.Chattable) error {
 		if err == nil {
 			return nil
 		}
+		if isMessageNotModifiedError(err) {
+			return nil
+		}
 		lastErr = err
 		log.Printf("telegram send retryable=%v attempt=%d err=%v", isTransientTelegramError(err), attempt+1, err)
 		if !isTransientTelegramError(err) || attempt == telegramSendRetries-1 {
@@ -199,6 +202,13 @@ func (b *Bot) sendWithRetry(chattable tgbotapi.Chattable) error {
 		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
 	}
 	return lastErr
+}
+
+func isMessageNotModifiedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "message is not modified")
 }
 
 func isTransientTelegramError(err error) bool {

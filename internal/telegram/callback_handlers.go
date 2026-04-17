@@ -123,12 +123,15 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 		switch parts[1] {
 		case "product":
 			state.PageProduct = stepPage(page, parts[2])
+			b.setSession(chatID, state)
 			return b.askProduct(chatID, msgID)
 		case "color":
 			state.PageColor = stepPage(page, parts[2])
+			b.setSession(chatID, state)
 			return b.askColor(chatID, state.Product, msgID)
 		case "section":
 			state.PageSection = stepPage(page, parts[2])
+			b.setSession(chatID, state)
 			return b.askSection(chatID, state.Product, state.Color, msgID)
 		default:
 			return nil
@@ -175,12 +178,15 @@ func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, ste
 		switch step {
 		case "product":
 			state.Awaiting = "product"
+			b.setSession(chatID, state)
 			return b.askProduct(chatID, msgID)
 		case "color":
 			state.Awaiting = "color"
+			b.setSession(chatID, state)
 			return b.askColor(chatID, state.Product, msgID)
 		case "section":
 			state.Awaiting = "section"
+			b.setSession(chatID, state)
 			return b.askSection(chatID, state.Product, state.Color, msgID)
 		default:
 			return nil
@@ -194,11 +200,13 @@ func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, ste
 		state.Color, state.Section = "", ""
 		state.UploadLevel = ""
 		state.PageColor, state.PageSection = 0, 0
+		b.setSession(chatID, state)
 		return b.askProduct(chatID, msgID)
 	case "section":
 		state.Section = ""
 		state.UploadLevel = ""
 		state.PageSection = 0
+		b.setSession(chatID, state)
 		return b.askColor(chatID, state.Product, msgID)
 	default:
 		return nil
