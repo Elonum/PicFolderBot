@@ -79,6 +79,19 @@ func (b *Bot) send(chatID int64, text string) error {
 	return b.sendWithRetry(tgbotapi.NewMessage(chatID, text))
 }
 
+func (b *Bot) sendCustomKeyboard(chatID int64, text string, rows [][]tgbotapi.InlineKeyboardButton, editMessageID int) error {
+	if len(rows) == 0 {
+		return b.sendOrEditText(chatID, text, editMessageID)
+	}
+	markup := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	if editMessageID > 0 {
+		return b.sendWithRetry(tgbotapi.NewEditMessageTextAndMarkup(chatID, editMessageID, text, markup))
+	}
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = markup
+	return b.sendWithRetry(msg)
+}
+
 func (b *Bot) sendWithKeyboard(chatID int64, text, field string, values []string, addLevel string, backStep string, page int, editMessageID int, extraRows ...[]tgbotapi.InlineKeyboardButton) error {
 	state := b.getSession(chatID)
 	if state != nil && state.ValueMap == nil {

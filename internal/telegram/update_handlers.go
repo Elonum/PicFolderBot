@@ -95,6 +95,37 @@ func (b *Bot) handleUpdate(upd tgbotapi.Update) error {
 		b.setSession(chatID, state)
 		return err
 	}
+	if state != nil && state.Awaiting == "rename_single" && msg.Text != "" {
+		typed := strings.TrimSpace(msg.Text)
+		if typed == "" {
+			return b.send(chatID, "⚠️ Введите новое имя файла.")
+		}
+		state.FileName = applyRenameInput(state.FileName, typed, state.FileMIME)
+		state.Awaiting = "uploading"
+		b.setSession(chatID, state)
+		level := strings.TrimSpace(state.UploadLevel)
+		if level == "" {
+			level = service.LevelSection
+		}
+		return b.enqueueSingleUpload(chatID, level, state, 0)
+	}
+	if state != nil && state.Awaiting == "rename_album" && msg.Text != "" {
+		typed := strings.TrimSpace(msg.Text)
+		if typed == "" {
+			return b.send(chatID, "⚠️ Введите новое базовое имя (применю ко всем файлам).")
+		}
+		key := strings.TrimSpace(state.PendingAlbumKey)
+		if key == "" {
+			state.Awaiting = "section"
+			b.setSession(chatID, state)
+			return b.send(chatID, "⚠️ Не найден ожидающий пакет. Отправьте файлы ещё раз.")
+		}
+		b.renameAlbumFilenames(key, typed)
+		state.Awaiting = "uploading"
+		b.setSession(chatID, state)
+		go b.flushAlbum(key)
+		return b.send(chatID, "⏳ Применил переименование. Загружаю пакет…")
+	}
 	if state != nil && state.Awaiting == "search_product_query" && msg.Text != "" {
 		// Allow full-path input even inside /search query.
 		if ok, err := b.tryApplyFullPathInput(chatID, state, msg.Text); ok || err != nil {
@@ -345,8 +376,20 @@ func (b *Bot) sendRecentMenu(chatID int64) error {
 	}
 	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(items)+1)
 	for i, it := range items {
-		label := b.pathHint(it.Product, it.Color, it.Section)
-		label = strings.TrimPrefix(label, "📁 Путь: ")
+		parts := make([]string, 0, 3)
+		if v := strings.TrimSpace(it.Product); v != "" {
+			parts = append(parts, v)
+		}
+		if v := strings.TrimSpace(it.Color); v != "" {
+			parts = append(parts, v)
+		}
+		if v := strings.TrimSpace(it.Section); v != "" {
+			parts = append(parts, v)
+		}
+		label := strings.Join(parts, " / ")
+		if label == "" {
+			label = "Путь не определен"
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(trimButtonLabel(label), fmt.Sprintf("recent|use|%d", i)),
 		))
@@ -411,6 +454,14 @@ func (b *Bot) flushAlbum(key string) {
 		b.albumsMu.Unlock()
 		return
 	}
+	// Guard: if we already asked for rename for this album, do not spam the chat
+	// on repeated timer flushes/callback-triggered flushes.
+	if st := b.getSession(buf.ChatID); st != nil {
+		if st.Awaiting == "rename_album" && strings.TrimSpace(st.PendingAlbumKey) == key {
+			b.albumsMu.Unlock()
+			return
+		}
+	}
 	b.fillAlbumPathFromSession(buf)
 	level := strings.TrimSpace(buf.UploadLevel)
 	if level == "" {
@@ -430,6 +481,33 @@ func (b *Bot) flushAlbum(key string) {
 		b.setSession(buf.ChatID, state)
 		b.albumStore.Set(key, buf)
 		_ = b.promptPendingAlbumPath(buf.ChatID, state)
+		return
+	}
+	// If we are uploading now, skip rename prompt and proceed.
+	if st := b.getSession(buf.ChatID); st != nil && st.Awaiting == "uploading" && strings.TrimSpace(st.PendingAlbumKey) == key {
+		// proceed
+	} else if level == service.LevelSection && isTitularSectionName(buf.Section) {
+		// Ask once for the whole album before uploading.
+		state := b.getSession(buf.ChatID)
+		if state == nil {
+			state = &sessionState{}
+		}
+		state.PendingAlbumKey = key
+		state.Awaiting = "rename_album"
+		b.setSession(buf.ChatID, state)
+		b.albumStore.Set(key, buf)
+		b.albumsMu.Unlock()
+		_ = b.sendWithKeyboard(buf.ChatID,
+			"✍️ Переименование файлов (титульники)\n\nВведите новое базовое имя.\nЯ применю его ко всем файлам как: Имя_01.jpg, Имя_02.jpg …\n\nИли нажмите «Без изменений».",
+			"", nil, "", "section", 0, 0,
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("⏭️ Без изменений", "rename|album|skip"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
+				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+			),
+		)
 		return
 	}
 	delete(b.albums, key)
@@ -485,16 +563,17 @@ func (b *Bot) flushAlbum(key string) {
 		state.Awaiting = "photo"
 		b.setSession(buf.ChatID, state)
 	}
-	_ = b.sendWithKeyboard(buf.ChatID, result+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", "", nil, "", "section", 0, 0,
+	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|go"),
+			tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
 			tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🕘 Последние", "recent|open|x"),
 			tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
 		),
-	)
+	}
+	_ = b.sendCustomKeyboard(buf.ChatID, result+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", rows, 0)
 }
 
 func (b *Bot) processPendingAlbumIfReady(chatID int64, state *sessionState) (bool, error) {
@@ -594,4 +673,48 @@ func folderFromTarget(target string) string {
 		return target
 	}
 	return target[:idx]
+}
+
+func applyRenameInput(originalFileName string, typed string, mimeType string) string {
+	typed = strings.TrimSpace(typed)
+	if typed == "" {
+		return originalFileName
+	}
+	// User input replaces the filename. If no extension is provided, preserve the original extension.
+	clean := strings.TrimSpace(typed)
+	clean = strings.ReplaceAll(clean, "/", "_")
+	clean = strings.ReplaceAll(clean, "\\", "_")
+	if strings.Contains(clean, ".") {
+		return buildFileName(clean, mimeType)
+	}
+	ext := inferExtension(mimeType)
+	if dot := strings.LastIndex(strings.TrimSpace(originalFileName), "."); dot > 0 {
+		ext = strings.TrimSpace(originalFileName)[dot:]
+	}
+	return buildFileName(clean+ext, mimeType)
+}
+
+func (b *Bot) renameAlbumFilenames(key string, newBase string) {
+	newBase = strings.TrimSpace(newBase)
+	if newBase == "" {
+		return
+	}
+	b.albumsMu.Lock()
+	defer b.albumsMu.Unlock()
+	buf := b.albums[key]
+	if buf == nil {
+		buf = b.albumStore.Get(key)
+	}
+	if buf == nil {
+		return
+	}
+	for i := range buf.Items {
+		// Apply base name to all files; keep each file's extension and add index suffix for uniqueness.
+		ext := inferExtension(buf.Items[i].MimeType)
+		if dot := strings.LastIndex(buf.Items[i].Filename, "."); dot > 0 {
+			ext = buf.Items[i].Filename[dot:]
+		}
+		buf.Items[i].Filename = buildFileName(fmt.Sprintf("%s_%02d%s", newBase, i+1, ext), buf.Items[i].MimeType)
+	}
+	b.albumStore.Set(key, buf)
 }

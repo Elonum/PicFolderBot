@@ -121,6 +121,21 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 		b.setSession(chatID, state)
 		return b.sendWithKeyboard(chatID, "📸 Теперь отправьте фото в выбранную папку.\n"+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
 	}
+
+	// If we are in a titular section, offer renaming before upload.
+	if level == service.LevelSection && isTitularSectionName(state.Section) {
+		state.Awaiting = "rename_single"
+		b.setSession(chatID, state)
+		rows := [][]tgbotapi.InlineKeyboardButton{
+			tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("⏭️ Без изменений", "rename|single|skip")),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
+				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
+			),
+		}
+		text := "✍️ Переименование файла (титульники)\n\nТекущее имя:\n" + state.FileName + "\n\nОтправьте новое имя файла.\nМожно без расширения — я сохраню текущее."
+		return b.sendCustomKeyboard(chatID, text, rows, extractEditID(editMessageID...))
+	}
 	return b.enqueueSingleUpload(chatID, level, state, extractEditID(editMessageID...))
 }
 
@@ -188,16 +203,17 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 		// Sticky mode: keep the chosen path and wait for new files.
 		s.Awaiting = "photo"
 		b.setSession(chatID, s)
-		_ = b.sendWithKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+res.Target+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", "", nil, "", "section", 0, 0,
+		rows := [][]tgbotapi.InlineKeyboardButton{
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|go"),
+				tgbotapi.NewInlineKeyboardButtonData("↩️ Назад", "back|section|stay"),
 				tgbotapi.NewInlineKeyboardButtonData("🧭 Изменить путь", "post|change|path"),
 			),
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("🕘 Последние", "recent|open|x"),
 				tgbotapi.NewInlineKeyboardButtonData("🏠 В начало", "home|go|x"),
 			),
-		)
+		}
+		_ = b.sendCustomKeyboard(chatID, "✅ Готово. Изображение сохранено:\n"+res.Target+"\n\n📤 Можете загрузить ещё — просто отправьте новые файлы.", rows, 0)
 	}()
 	return nil
 }

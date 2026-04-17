@@ -112,6 +112,34 @@ func (b *Bot) handleCallback(cb *tgbotapi.CallbackQuery) error {
 			return b.askProduct(chatID)
 		}
 		return nil
+	case "rename":
+		if len(parts) != 3 {
+			return nil
+		}
+		switch parts[1] {
+		case "single":
+			if parts[2] == "skip" {
+				level := strings.TrimSpace(state.UploadLevel)
+				if level == "" {
+					level = service.LevelSection
+				}
+				state.Awaiting = "uploading"
+				b.setSession(chatID, state)
+				return b.enqueueSingleUpload(chatID, level, state, msgID)
+			}
+		case "album":
+			if parts[2] == "skip" {
+				key := strings.TrimSpace(state.PendingAlbumKey)
+				if key == "" {
+					return b.send(chatID, "⚠️ Не найден ожидающий пакет. Отправьте файлы ещё раз.")
+				}
+				state.Awaiting = "uploading"
+				b.setSession(chatID, state)
+				go b.flushAlbum(key)
+				return b.sendOrEditText(chatID, "⏳ Загружаю пакет…", msgID)
+			}
+		}
+		return nil
 	case "recent":
 		// recent|open|x OR recent|use|<idx>
 		if len(parts) != 3 {
@@ -252,6 +280,8 @@ func (b *Bot) applySetSelection(state *sessionState, field, value string) {
 
 func (b *Bot) handleBackAction(chatID int64, msgID int, state *sessionState, step, mode string) error {
 	if mode == "stay" {
+		// "stay" means: go back to the list on the same level without
+		// wiping already selected upper levels.
 		state.AddLevel = ""
 		state.UploadLevel = ""
 		switch step {

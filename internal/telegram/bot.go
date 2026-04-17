@@ -17,7 +17,7 @@ const (
 	telegramDownloadTimeout = 30 * time.Second
 	maxImageBytes           = 20 << 20 // 20MB
 	listPageSize            = 8
-	maxButtonLabelRunes     = 26
+	maxButtonLabelRunes     = 34
 	albumFlushDelay         = 1200 * time.Millisecond
 	telegramSendRetries     = 3
 	prefetchCooldown        = 12 * time.Second

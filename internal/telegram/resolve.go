@@ -5,6 +5,23 @@ import (
 	"strings"
 )
 
+func isTitularSectionName(section string) bool {
+	n := normalizeLookup(section)
+	if n == "" {
+		return false
+	}
+	// Russian: титул/титульник/титульники/титульн...
+	if strings.Contains(n, "титул") || strings.Contains(n, "титуль") {
+		return true
+	}
+	// Common EN variants.
+	if strings.Contains(n, "title") {
+		return true
+	}
+	// Fuzzy fallback for minor typos.
+	return fuzzyScore(n, "титульник") >= 0.78 || fuzzyScore(n, "титульники") >= 0.78
+}
+
 func resolveTypedOption(options []string, input string) string {
 	return resolveTypedOptionSmart(options, input).Value
 }
@@ -67,39 +84,58 @@ func normalizeLookup(v string) string {
 	v = strings.ReplaceAll(v, "ё", "е")
 	v = strings.ReplaceAll(v, "-", " ")
 	v = strings.ReplaceAll(v, "_", " ")
-	// Map Cyrillic/Latin confusables to a unified Latin form.
-	v = strings.Map(func(r rune) rune {
-		switch r {
-		// Cyrillic -> Latin
-		case 'а':
-			return 'a'
-		case 'в':
-			return 'b'
-		case 'с':
-			return 'c'
-		case 'е':
-			return 'e'
-		case 'н':
-			return 'h'
-		case 'к':
-			return 'k'
-		case 'м':
-			return 'm'
-		case 'о':
-			return 'o'
-		case 'р':
-			return 'p'
-		case 'т':
-			return 't'
-		case 'х':
-			return 'x'
-		case 'у':
-			return 'y'
-		default:
-			return r
-		}
-	}, v)
+	// Map Cyrillic/Latin confusables only for code-like inputs (articles),
+	// otherwise it breaks normal Russian words (e.g. "Титульники").
+	if looksLikeArticleCode(v) {
+		v = strings.Map(func(r rune) rune {
+			switch r {
+			// Cyrillic -> Latin (safe for mixed-script article codes like F06Р03)
+			case 'а':
+				return 'a'
+			case 'в':
+				return 'b'
+			case 'с':
+				return 'c'
+			case 'е':
+				return 'e'
+			case 'н':
+				return 'h'
+			case 'к':
+				return 'k'
+			case 'м':
+				return 'm'
+			case 'о':
+				return 'o'
+			case 'р':
+				return 'p'
+			case 'т':
+				return 't'
+			case 'х':
+				return 'x'
+			case 'у':
+				return 'y'
+			default:
+				return r
+			}
+		}, v)
+	}
 	return strings.Join(strings.Fields(v), " ")
+}
+
+func looksLikeArticleCode(v string) bool {
+	hasDigit := false
+	hasLatin := false
+	for _, r := range v {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r >= 'a' && r <= 'z':
+			hasLatin = true
+		}
+	}
+	// require at least some signal; article codes always include digits,
+	// and often include latin letters.
+	return hasDigit || hasLatin
 }
 
 func fuzzyScore(option, input string) float64 {
