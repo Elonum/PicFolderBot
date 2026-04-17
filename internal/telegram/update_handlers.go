@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -142,11 +143,11 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		if err != nil {
 			return true, b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
 		}
-		resolved := resolveTypedOption(options, value)
-		if resolved == "" {
-			return true, b.send(chatID, "⚠️ Такой папки товара нет. Выберите из списка или введите точное название.")
+		res := resolveTypedOptionSmart(options, value)
+		if res.Value == "" {
+			return true, b.sendResolveHint(chatID, "product", res, "⚠️ Не удалось однозначно определить папку товара.")
 		}
-		state.Product, state.Color, state.Section = resolved, "", ""
+		state.Product, state.Color, state.Section = res.Value, "", ""
 		state.PageColor, state.PageSection = 0, 0
 		return true, b.continueUploadFlow(chatID, state)
 	case "color":
@@ -157,11 +158,11 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		if err != nil {
 			return true, b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
 		}
-		resolved := resolveTypedOption(options, value)
-		if resolved == "" {
-			return true, b.send(chatID, "⚠️ Такой папки цвета нет. Выберите из списка или введите точное название.")
+		res := resolveTypedOptionSmart(options, value)
+		if res.Value == "" {
+			return true, b.sendResolveHint(chatID, "color", res, "⚠️ Не удалось однозначно определить папку цвета.")
 		}
-		state.Color, state.Section = resolved, ""
+		state.Color, state.Section = res.Value, ""
 		state.PageSection = 0
 		return true, b.continueUploadFlow(chatID, state)
 	case "section":
@@ -172,11 +173,11 @@ func (b *Bot) handlePathTextInput(chatID int64, state *sessionState, input strin
 		if err != nil {
 			return true, b.send(chatID, "❌ Не удалось получить список разделов:\n"+humanError(err))
 		}
-		resolved := resolveTypedOption(options, value)
-		if resolved == "" {
-			return true, b.send(chatID, "⚠️ Такой папки раздела нет. Выберите из списка или введите точное название.")
+		res := resolveTypedOptionSmart(options, value)
+		if res.Value == "" {
+			return true, b.sendResolveHint(chatID, "section", res, "⚠️ Не удалось однозначно определить папку раздела.")
 		}
-		state.Section = resolved
+		state.Section = res.Value
 		return true, b.continueUploadFlow(chatID, state)
 	default:
 		return false, nil
@@ -188,32 +189,50 @@ func (b *Bot) tryApplyFullPathInput(chatID int64, state *sessionState, input str
 	if !ok {
 		return false, nil
 	}
+	// Resolve full path progressively and preserve successful levels.
+	// If some level is wrong/ambiguous, stop there and suggest options for that level.
 	products, err := b.flow.ListProducts()
 	if err != nil {
 		return true, b.send(chatID, "❌ Не удалось получить список товаров:\n"+humanError(err))
 	}
-	product := resolveTypedOption(products, productRaw)
-	if product == "" {
-		return true, b.send(chatID, "⚠️ Товар из полного пути не найден. Проверьте ввод.")
+	productRes := resolveTypedOptionSmart(products, productRaw)
+	if productRes.Value == "" {
+		state.Awaiting = "product"
+		b.setSession(chatID, state)
+		return true, b.sendResolveHint(chatID, "product", productRes, "⚠️ Товар из полного пути не найден или неоднозначен.")
 	}
+	product := productRes.Value
+	state.Product, state.Color, state.Section = product, "", ""
+	state.PageColor, state.PageSection = 0, 0
+	b.setSession(chatID, state)
 	colors, err := b.flow.ListColors(product)
 	if err != nil {
 		return true, b.send(chatID, "❌ Не удалось получить список цветов:\n"+humanError(err))
 	}
-	color := resolveTypedOption(colors, colorRaw)
-	if color == "" {
-		return true, b.send(chatID, "⚠️ Цвет из полного пути не найден для выбранного товара.")
+	colorRes := resolveTypedOptionSmart(colors, colorRaw)
+	if colorRes.Value == "" {
+		state.Awaiting = "color"
+		b.setSession(chatID, state)
+		return true, b.sendResolveHint(chatID, "color", colorRes, "⚠️ Товар найден. Цвет из полного пути не найден или неоднозначен.")
 	}
+	color := colorRes.Value
+	state.Color, state.Section = color, ""
+	state.PageSection = 0
+	b.setSession(chatID, state)
 	sections, err := b.flow.ListSections(product, color)
 	if err != nil {
 		return true, b.send(chatID, "❌ Не удалось получить список разделов:\n"+humanError(err))
 	}
-	section := resolveTypedOption(sections, sectionRaw)
-	if section == "" {
-		return true, b.send(chatID, "⚠️ Раздел из полного пути не найден для выбранного цвета.")
+	sectionRes := resolveTypedOptionSmart(sections, sectionRaw)
+	if sectionRes.Value == "" {
+		state.Awaiting = "section"
+		b.setSession(chatID, state)
+		return true, b.sendResolveHint(chatID, "section", sectionRes, "⚠️ Товар и цвет найдены. Раздел из полного пути не найден или неоднозначен.")
 	}
+	section := sectionRes.Value
 	state.Product, state.Color, state.Section = product, color, section
 	state.PageColor, state.PageSection = 0, 0
+	b.setSession(chatID, state)
 	return true, b.continueUploadFlow(chatID, state)
 }
 
@@ -246,23 +265,60 @@ func splitBySeparators(input string) []string {
 }
 
 func resolveTypedOption(options []string, input string) string {
+	return resolveTypedOptionSmart(options, input).Value
+}
+
+type optionResolution struct {
+	Value       string
+	Suggestions []string
+}
+
+type optionScore struct {
+	value string
+	score float64
+}
+
+func resolveTypedOptionSmart(options []string, input string) optionResolution {
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return ""
+		return optionResolution{}
 	}
 	normInput := normalizeLookup(input)
+	if normInput == "" {
+		return optionResolution{}
+	}
+
+	// 1) Strict match only.
 	for _, opt := range options {
-		if strings.EqualFold(strings.TrimSpace(opt), input) {
-			return opt
-		}
-		if normalizeLookup(opt) == normInput {
-			return opt
-		}
-		if strings.Contains(normalizeLookup(opt), normInput) || strings.Contains(normInput, normalizeLookup(opt)) {
-			return opt
+		if strings.EqualFold(strings.TrimSpace(opt), input) || normalizeLookup(opt) == normInput {
+			return optionResolution{Value: opt}
 		}
 	}
-	return ""
+
+	// 2) Safe fuzzy match with deterministic ranking.
+	matches := make([]optionScore, 0, len(options))
+	suggestions := make([]optionScore, 0, len(options))
+	for _, opt := range options {
+		normOpt := normalizeLookup(opt)
+		score := fuzzyScore(normOpt, normInput)
+		if score >= 0.45 {
+			suggestions = append(suggestions, optionScore{value: opt, score: score})
+		}
+		if score >= 0.72 {
+			matches = append(matches, optionScore{value: opt, score: score})
+		}
+	}
+	if len(matches) == 0 {
+		return optionResolution{Suggestions: topSuggestions(suggestions, 3)}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].score > matches[j].score })
+	best := matches[0]
+	// Protect user from accidental wrong navigation:
+	// if two options are too close in score, we ask user to choose manually.
+	if len(matches) > 1 && best.score-matches[1].score < 0.08 {
+		return optionResolution{Suggestions: topSuggestions(matches, 3)}
+	}
+	return optionResolution{Value: best.value}
 }
 
 func normalizeLookup(v string) string {
@@ -271,6 +327,95 @@ func normalizeLookup(v string) string {
 	v = strings.ReplaceAll(v, "-", " ")
 	v = strings.ReplaceAll(v, "_", " ")
 	return strings.Join(strings.Fields(v), " ")
+}
+
+func fuzzyScore(option, input string) float64 {
+	if option == "" || input == "" {
+		return 0
+	}
+	if option == input {
+		return 1
+	}
+
+	// Prefix match is useful for short article-style names.
+	prefix := 0.0
+	if strings.HasPrefix(option, input) || strings.HasPrefix(input, option) {
+		// Penalize large length mismatch (prevents F05P02 -> F05P0200 mistakes).
+		diff := absInt(len(option) - len(input))
+		prefix = 0.9 - float64(diff)*0.06
+		if prefix < 0 {
+			prefix = 0
+		}
+	}
+
+	// Token overlap score.
+	optionTokens := strings.Fields(option)
+	inputTokens := strings.Fields(input)
+	overlap := tokenOverlap(optionTokens, inputTokens)
+
+	if overlap > prefix {
+		return overlap
+	}
+	return prefix
+}
+
+func tokenOverlap(a, b []string) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	setA := make(map[string]struct{}, len(a))
+	for _, v := range a {
+		setA[v] = struct{}{}
+	}
+	common := 0
+	for _, v := range b {
+		if _, ok := setA[v]; ok {
+			common++
+		}
+	}
+	if common == 0 {
+		return 0
+	}
+	denominator := len(a)
+	if len(b) > denominator {
+		denominator = len(b)
+	}
+	return float64(common) / float64(denominator)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func topSuggestions(values []optionScore, limit int) []string {
+	if len(values) == 0 || limit <= 0 {
+		return nil
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].score > values[j].score })
+	seen := make(map[string]struct{}, limit)
+	out := make([]string, 0, limit)
+	for _, v := range values {
+		if _, ok := seen[v.value]; ok {
+			continue
+		}
+		seen[v.value] = struct{}{}
+		out = append(out, v.value)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+func (b *Bot) sendResolveHint(chatID int64, field string, res optionResolution, baseText string) error {
+	if len(res.Suggestions) == 0 {
+		return b.send(chatID, baseText+"\nВведите точнее или выберите кнопку из списка.")
+	}
+	text := baseText + "\nВарианты ниже помогут выбрать быстрее."
+	return b.sendWithKeyboard(chatID, text, field, res.Suggestions, "", field, 0, 0)
 }
 
 func (b *Bot) enqueueAlbumItem(chatID int64, groupID string, item albumItem, product, color, section, uploadLevel string) error {
