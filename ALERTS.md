@@ -8,6 +8,7 @@ Each alert includes:
 - severity (`ALERT` or `CRITICAL`)
 - time (RFC3339)
 - service (`PicFolderBot`)
+- request_id / update_id (for Telegram-flow correlation, when available)
 - component/op/status/path/error
 - user_id (when available from Telegram update context)
 

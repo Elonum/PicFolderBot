@@ -91,3 +91,13 @@ docker compose logs -f
    - нет "сырых" технических ошибок для пользователя;
    - при сетевых сбоях есть понятный текст и повторяемость действий.
 
+## Наблюдаемость
+
+- Метрики доступны на `GET /debug/vars` (через `HEALTH_ADDR`).
+- Включены счетчики по алертам:
+  - `alerts_raised`
+  - `alerts_sent`
+  - `alerts_suppressed_cooldown`
+  - `alerts_send_errors`
+  - `alerts_user_rate_limited`
+

@@ -3,6 +3,8 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +97,21 @@ type albumBuffer struct {
 }
 
 func NewBot(token string, flow flowAPI, sessionStore SessionStore, albumStore AlbumStore) (*Bot, error) {
-	api, err := tgbotapi.NewBotAPI(strings.TrimSpace(token))
+	_ = tgbotapi.SetLogger(telegramAPILogger{})
+
+	httpClient := &http.Client{
+		Timeout: 70 * time.Second,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+	api, err := tgbotapi.NewBotAPIWithClient(strings.TrimSpace(token), tgbotapi.APIEndpoint, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -144,24 +160,28 @@ func (b *Bot) Run(ctx context.Context) error {
 			return nil
 		case upd := <-updates:
 			func() {
+				requestID := logging.NewRequestID(upd.UpdateID)
+				chatID := extractChatID(upd)
 				defer func() {
 					if r := recover(); r != nil {
-						chatID := extractChatID(upd)
 						if chatID != 0 {
-							logging.Critical("panic in update handler", "component", "telegram", "user_id", chatID, "error", fmt.Errorf("panic: %v", r))
+							logging.Critical(logging.MsgUpdatePanic(), "component", "telegram", "request_id", requestID, "update_id", upd.UpdateID, "user_id", chatID, "error", fmt.Errorf("panic: %v", r))
 							return
 						}
-						logging.Critical("panic in update handler", "component", "telegram", "error", fmt.Errorf("panic: %v", r))
+						logging.Critical(logging.MsgUpdatePanic(), "component", "telegram", "request_id", requestID, "update_id", upd.UpdateID, "error", fmt.Errorf("panic: %v", r))
 					}
 				}()
 				if err := b.handleUpdate(upd); err != nil {
-					logging.Error("update processing failed", "component", "telegram", "error", err)
+					if chatID != 0 {
+						logging.Error("update processing failed", "component", "telegram", "request_id", requestID, "update_id", upd.UpdateID, "user_id", chatID, "error", err)
+					} else {
+						logging.Error("update processing failed", "component", "telegram", "request_id", requestID, "update_id", upd.UpdateID, "error", err)
+					}
 					if strings.Contains(strings.ToLower(err.Error()), "unauthorized") || strings.Contains(strings.ToLower(err.Error()), "(401)") {
-						chatID := extractChatID(upd)
 						if chatID != 0 {
-							logging.Alert("user flow failed by upstream authorization", "component", "telegram", "user_id", chatID, "error", err)
+							logging.Alert(logging.MsgUserFlowAuthFailed(), "component", "telegram", "request_id", requestID, "update_id", upd.UpdateID, "user_id", chatID, "error", err)
 						} else {
-							logging.Alert("user flow failed by upstream authorization", "component", "telegram", "error", err)
+							logging.Alert(logging.MsgUserFlowAuthFailed(), "component", "telegram", "request_id", requestID, "update_id", upd.UpdateID, "error", err)
 						}
 					}
 				}

@@ -98,18 +98,6 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-func readInt64OrDefault(key string, fallback int64) int64 {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return fallback
-	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return fallback
-	}
-	return v
-}
-
 func readIntOrDefault(key string, fallback int) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {

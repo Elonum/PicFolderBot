@@ -26,8 +26,6 @@ func (b *Bot) handlePhoto(msg *tgbotapi.Message) error {
 	if err != nil {
 		return b.send(chatID, msgTelegramDownloadFailed)
 	}
-	// Telegram message.Photo is always an image payload selected via "Send an image".
-	// Some Telegram CDN responses can expose generic MIME values, so we force safe image fallback.
 	if !isAllowedImageMIME(mimeType) {
 		mimeType = "image/jpeg"
 	}
@@ -123,7 +121,6 @@ func (b *Bot) continueUploadFlow(chatID int64, state *sessionState, editMessageI
 		return b.sendWithKeyboard(chatID, msgSendPhotoNow+b.pathHint(state.Product, state.Color, state.Section), "", nil, "", "section", 0, extractEditID(editMessageID...))
 	}
 
-	// If we are in a titular section, offer renaming before upload.
 	if level == service.LevelSection && isTitularSectionName(state.Section) {
 		state.Awaiting = awaitingRenameSingle
 		b.setSession(chatID, state)
@@ -173,7 +170,6 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 		MimeType: state.FileMIME,
 		Content:  state.FileBytes,
 	}
-	// Clear file bytes immediately to keep session small and UI responsive.
 	state.FileID, state.FileName, state.FileMIME, state.FileBytes = "", "", "", nil
 	state.Awaiting = awaitingUploading
 	b.setSession(chatID, state)
@@ -195,14 +191,12 @@ func (b *Bot) enqueueSingleUpload(chatID int64, level string, state *sessionStat
 			_ = b.send(chatID, msgDiskUploadErrorPrefix+humanError(res.Err))
 			return
 		}
-		// Remember successful path for quick reuse.
 		b.recent.Push(chatID, RecentPath{
 			Product: payload.Product,
 			Color:   payload.Color,
 			Section: payload.Section,
 			Level:   level,
 		})
-		// Sticky mode: keep the chosen path and wait for new files.
 		s.Awaiting = awaitingPhoto
 		b.setSession(chatID, s)
 		_ = b.sendCustomKeyboard(chatID, msgUploadSuccess(res.Target), uploadSuccessRows(), 0)

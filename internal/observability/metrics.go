@@ -2,7 +2,6 @@ package observability
 
 import (
 	"expvar"
-	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +26,12 @@ var (
 
 	tgSends   = expvar.NewInt("telegram_sends")
 	tgRetries = expvar.NewInt("telegram_retries")
+
+	alertsRaised         = expvar.NewInt("alerts_raised")
+	alertsSent           = expvar.NewInt("alerts_sent")
+	alertsSuppressed     = expvar.NewInt("alerts_suppressed_cooldown")
+	alertsSendErrors     = expvar.NewInt("alerts_send_errors")
+	alertsUserSuppressed = expvar.NewInt("alerts_user_rate_limited")
 )
 
 func ObserveListProducts(d time.Duration) {
@@ -53,5 +58,8 @@ func YadiskRetry()   { yadiskRetries.Add(1) }
 func TelegramSend()  { tgSends.Add(1) }
 func TelegramRetry() { tgRetries.Add(1) }
 
-// For unit tests / internal checks.
-var _ = atomic.Int64{}
+func AlertRaised()         { alertsRaised.Add(1) }
+func AlertSent()           { alertsSent.Add(1) }
+func AlertSuppressed()     { alertsSuppressed.Add(1) }
+func AlertSendError()      { alertsSendErrors.Add(1) }
+func AlertUserSuppressed() { alertsUserSuppressed.Add(1) }

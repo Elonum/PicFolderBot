@@ -459,8 +459,6 @@ func (b *Bot) flushAlbum(key string) {
 		b.albumsMu.Unlock()
 		return
 	}
-	// Guard: if we already asked for rename for this album, do not spam the chat
-	// on repeated timer flushes/callback-triggered flushes.
 	if st := b.getSession(buf.ChatID); st != nil {
 		if st.Awaiting == awaitingRenameAlbum && strings.TrimSpace(st.PendingAlbumKey) == key {
 			b.albumsMu.Unlock()
@@ -488,11 +486,8 @@ func (b *Bot) flushAlbum(key string) {
 		_ = b.promptPendingAlbumPath(buf.ChatID, state)
 		return
 	}
-	// If we are uploading now, skip rename prompt and proceed.
 	if st := b.getSession(buf.ChatID); st != nil && st.Awaiting == awaitingUploading && strings.TrimSpace(st.PendingAlbumKey) == key {
-		// proceed
 	} else if level == service.LevelSection && isTitularSectionName(buf.Section) {
-		// Ask once for the whole album before uploading.
 		state := b.getSession(buf.ChatID)
 		if state == nil {
 			state = &sessionState{}
@@ -551,7 +546,6 @@ func (b *Bot) flushAlbum(key string) {
 		state.PendingAlbumKey = ""
 		b.setSession(buf.ChatID, state)
 	}
-	// Remember successful path for quick reuse.
 	if success > 0 {
 		b.recent.Push(buf.ChatID, RecentPath{
 			Product: product,

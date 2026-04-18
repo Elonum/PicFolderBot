@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"PicFolderBot/internal/observability"
 )
 
 type CriticalNotifier interface {
@@ -15,11 +18,25 @@ type CriticalNotifier interface {
 }
 
 var (
-	mu            sync.RWMutex
-	base          = newDefaultLogger()
-	criticalSink  CriticalNotifier
-	alertCooldown = 2 * time.Minute
-	lastAlertAt   = map[string]time.Time{}
+	mu                 sync.RWMutex
+	base               = newDefaultLogger()
+	criticalSink       CriticalNotifier
+	alertCooldown      = 2 * time.Minute
+	lastAlertAt        = map[string]time.Time{}
+	userLastAlert      = map[int64]time.Time{}
+	userCooldown       = 30 * time.Second
+	alertAllowedFields = map[string]bool{
+		"component":  true,
+		"op":         true,
+		"request_id": true,
+		"update_id":  true,
+		"user_id":    true,
+		"chat_id":    true,
+		"status":     true,
+		"attempts":   true,
+		"path":       true,
+		"error":      true,
+	}
 )
 
 func Init(levelText string, format string) {
@@ -54,13 +71,23 @@ func Critical(msg string, args ...any) {
 }
 
 func notifyWithCooldown(severity string, msg string, args ...any) {
+	observability.AlertRaised()
 	mu.Lock()
 	sink := criticalSink
 	key := alertKey(severity, msg, args...)
 	last, ok := lastAlertAt[key]
 	if ok && time.Since(last) < alertCooldown {
+		observability.AlertSuppressed()
 		mu.Unlock()
 		return
+	}
+	if userID, ok := extractUserID(args...); ok {
+		if lastUser, userExists := userLastAlert[userID]; userExists && time.Since(lastUser) < userCooldown {
+			observability.AlertUserSuppressed()
+			mu.Unlock()
+			return
+		}
+		userLastAlert[userID] = time.Now()
 	}
 	lastAlertAt[key] = time.Now()
 	mu.Unlock()
@@ -71,8 +98,11 @@ func notifyWithCooldown(severity string, msg string, args ...any) {
 	text := formatAlert(severity, msg, args...)
 	go func() {
 		if err := sink.Notify(context.Background(), text); err != nil {
-			logger().Warn("failed to send critical alert", "error", err)
+			observability.AlertSendError()
+			logger().Warn("failed to send alert", "error", err)
+			return
 		}
+		observability.AlertSent()
 	}()
 }
 
@@ -120,19 +150,9 @@ func formatAlert(severity string, msg string, args ...any) string {
 		return sb.String()
 	}
 	sb.WriteString("\n")
-	allowed := map[string]bool{
-		"component": true,
-		"op":        true,
-		"user_id":   true,
-		"chat_id":   true,
-		"status":    true,
-		"attempts":  true,
-		"path":      true,
-		"error":     true,
-	}
 	for i := 0; i+1 < len(args); i += 2 {
 		k, ok := args[i].(string)
-		if !ok || !allowed[k] {
+		if !ok || !alertAllowedFields[k] {
 			continue
 		}
 		sb.WriteString(fmt.Sprintf("- %s: %v\n", k, args[i+1]))
@@ -153,4 +173,25 @@ func alertKey(severity string, msg string, args ...any) string {
 		}
 	}
 	return b.String()
+}
+
+func extractUserID(args ...any) (int64, bool) {
+	for i := 0; i+1 < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok || key != "user_id" {
+			continue
+		}
+		switch v := args[i+1].(type) {
+		case int64:
+			return v, v != 0
+		case int:
+			return int64(v), v != 0
+		case string:
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err == nil && n != 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }

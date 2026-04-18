@@ -209,7 +209,6 @@ func (f *Flow) CreateFolderAtLevel(level, product, color, section, newFolder str
 	parentPath := f.root
 	switch level {
 	case LevelProduct:
-		// Root level: create product folder directly under root.
 	case LevelColor:
 		if p == "" {
 			return "", errors.New("product is required for color level")

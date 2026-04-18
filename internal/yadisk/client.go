@@ -254,7 +254,7 @@ func (c *Client) doWithRetry(fn func() (*http.Response, error)) (*http.Response,
 					continue
 				}
 				logging.Alert(
-					"yadisk retries exhausted by transient status",
+					logging.MsgYadiskRetriesExhausted(),
 					"component", "yadisk",
 					"status", resp.StatusCode,
 					"attempts", yandexRetries,
@@ -305,7 +305,7 @@ func maybeAlertYandexError(op string, diskPath string, err error) {
 		strings.Contains(low, "forbidden"),
 		strings.Contains(low, "(403)"):
 		logging.Alert(
-			"yadisk authorization error",
+			logging.MsgYadiskAuthError(),
 			"component", "yadisk",
 			"op", op,
 			"path", diskPath,
@@ -318,7 +318,7 @@ func maybeAlertYandexError(op string, diskPath string, err error) {
 		strings.Contains(low, "connection reset"),
 		strings.Contains(low, "failed to respond"):
 		logging.Alert(
-			"yadisk unstable upstream or network",
+			logging.MsgYadiskUpstreamUnstable(),
 			"component", "yadisk",
 			"op", op,
 			"path", diskPath,
