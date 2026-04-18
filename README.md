@@ -54,6 +54,13 @@ docker compose up --build -d
 docker compose logs -f
 ```
 
+Проверка состояния контейнера и health:
+
+```bash
+docker compose ps
+docker inspect --format='{{json .State.Health}}' picfolderbot
+```
+
 ## Деплой на сервер (кратко)
 
 1. Скопировать проект на сервер.
